@@ -8,21 +8,21 @@ include("common.jl")
 import .CommonUtils.to_datetime
 import .CommonUtils.squeeze
 
-head(df) = df[1:5, :]
-tail(df) = df[end-4:end, :]
+head(df, n=5) = df[1:n, :]
+tail(df, n=5) = df[end-n+1:end, :]
 
 _eq(a, b) = ifelse(b === missing, ismissing(a), a == b)
 ffill(v, mark = missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]
 backfill(v, mark = missing) = reverse(ffill(reverse(v), mark))
 
-function interpolate(df, ts, column, ts_name::Symbol = :Timestamp)
-    l_tmp = DataFrame(ts_name => ts, column => missing)
+function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_column::Symbol = :Timestamp)
+    l_tmp = DataFrame(ts_column => ts, column => missing)
     l_tmp[!, :label] .= 0
 
-    r_tmp = df[!, [ts_name, column]]
+    r_tmp = df[!, [ts_column, column]]
     r_tmp[!, :label] .= 1
 
-    joined = sort(vcat(l_tmp, r_tmp), ts_name)
+    joined = sort(vcat(l_tmp, r_tmp), ts_column)
     joined[!, column] .= ffill(joined[!, column])
 
     return joined[joined.label.==0, column]

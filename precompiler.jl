@@ -41,6 +41,7 @@ function compile(args)
 
     unique!(packages)
     @show packages
+    @show exe_files
     create_sysimage(packages, sysimage_path=img_path, precompile_execution_file=exe_files)
 end
 
