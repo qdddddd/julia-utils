@@ -23,7 +23,7 @@ function compile(args)
 
     # Get packages to compile by
     # parsing the "using" statements
-    for (root_, dirs_, files_) in walkdir(root)
+    for (root_, _, files_) in walkdir(root)
         for file in files_
             if (!endswith(file, ".jl"))
                 continue
