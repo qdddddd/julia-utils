@@ -58,10 +58,17 @@ function from_hdf(
     return X1, X2, Y
 end
 
-function shift(arr::AbstractVector, n::Int)
+function shift(arr::AbstractVector, n::Int, fill_missing=missing)
     ret = Any[x for x in arr]
-    ret[1:n] .= missing
-    ret[n+1:end] = arr[1:end-n]
+
+    if n > 0
+        ret[1:n] .= fill_missing
+        ret[n+1:end] = arr[1:end-n]
+    elseif n < 0
+        ret[end+n+1:end] .= fill_missing
+        ret[1:end+n] = arr[-n+1:end]
+    end
+
     return ret
 end
 
