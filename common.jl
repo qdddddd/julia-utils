@@ -1,5 +1,5 @@
 module CommonUtils
-export to_datetime, sample, count_values, squeeze, combine_plots
+export to_datetime, sample, count_values, squeeze, combine_plots, *
 
 using Dates
 using StatsBase
@@ -28,7 +28,7 @@ end
 
 squeeze(arr) = dropdims(arr, dims=tuple(findall(size(arr) .== 1)...))
 
-function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, vertical_spacing=0.1, width=1350, height=300)
+function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, vertical_spacing=0.1, width=1350, height=300, showlegend=true)
     if length(vec) == 0
         return
     end
@@ -66,7 +66,7 @@ function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, v
     for i in 1:r
         for j in 1:c
             for t in vec[n].plot.data
-                restyle!(t, showlegend=n == 1)
+                restyle!(t, showlegend=(showlegend && n == 1))
                 add_trace!(p, t, row=i, col=j)
             end
 
@@ -80,14 +80,16 @@ function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, v
 
                 xt = nothing
                 if haskey(vec[1].plot.layout.xaxis, :title)
-                    if haskey(vec[1].plot.layout.xaxis[:title], :text)
+                    xt_dict = vec[1].plot.layout.xaxis[:title]
+                    if xt_dict !== nothing && haskey(xt_dict, :text)
                         xt = vec[1].plot.layout.xaxis[:title][:text]
                     end
                 end
 
                 relayout!(
                     p, width=width, height=r * height, title_text=title, title=attr(x=0.46, xanchor="center"),
-                    legend_title_text=ltt, xaxis_title=xt)
+                    legend_title_text=ltt, xaxis_title=xt, margin=attr(r=200)
+                )
                 return p
             end
 
@@ -95,5 +97,8 @@ function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, v
         end
     end
 end
+
+import Base.*
+*(a::Symbol, b::Symbol) = Symbol(string(a)*string(b))
 
 end
