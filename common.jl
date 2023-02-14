@@ -101,4 +101,6 @@ end
 import Base.*
 *(a::Symbol, b::Symbol) = Symbol(string(a)*string(b))
 
+join_str(vec) = """'$(join(vec, "','"))'"""
+
 end

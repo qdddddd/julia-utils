@@ -1,5 +1,5 @@
 module DfUtils
-export head, tail, ffill, backfill, interpolate, from_hdf, shift
+export head, tail, ffill, backfill, interpolate, from_hdf, shift, fillna, fillna!
 
 using DataFrames
 include("io.jl")
@@ -14,6 +14,9 @@ tail(df, n=5) = df[end-n+1:end, :]
 _eq(a, b) = ifelse(b === missing, ismissing(a), a == b)
 ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]
 backfill(v, mark=missing) = reverse(ffill(reverse(v), mark))
+fillna(v::AbstractVecOrMat, val) = map(x -> isnan(x) ? val : x, v)
+fillna!(v::AbstractVecOrMat, val) = map!(x -> isnan(x) ? val : x, v, v)
+fillna(df::DataFrame, val) = map(col -> fillna(col, val), eachcol(df))
 
 function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_column::Symbol=:Timestamp)
     l_tmp = DataFrame(ts_column => ts, column => missing)
