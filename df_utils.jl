@@ -1,12 +1,14 @@
 module DfUtils
-export head, tail, ffill, backfill, interpolate, from_hdf, shift, fillna, fillna!
+export head, tail, ffill, backfill, interpolate, from_hdf, shift, fillna, fillna!, collapse, parallel_apply, parallel_apply!, add_bins!
 
-using DataFrames
+using DataFrames, DataFramesMeta, Base.Threads, StatsBase
 include("io.jl")
 import .IO.read_hdf
 include("common.jl")
 import .CommonUtils.to_datetime
 import .CommonUtils.squeeze
+import .CommonUtils.format_number
+
 
 head(df, n=5) = df[1:n, :]
 tail(df, n=5) = df[end-n+1:end, :]
@@ -43,6 +45,7 @@ function from_hdf(
     end
 
     ts = hdf["timestamp"] .|> to_datetime
+    seq = haskey(hdf, "appseq") ? hdf["appseq"] : missing
 
     X1 = hdf["x"]
     X1 = squeeze(X1) |> transpose
@@ -57,6 +60,12 @@ function from_hdf(
 
     Y = DataFrame(transpose(hdf["y"]), label_names)
     insertcols!(Y, 1, :Timestamp => ts)
+
+    if seq !== missing
+        insertcols!(X1, 1, :AppSeq => seq)
+        insertcols!(X2, 1, :AppSeq => seq)
+        insertcols!(Y, 1, :AppSeq => seq)
+    end
 
     return X1, X2, Y
 end
@@ -74,5 +83,79 @@ function shift(arr::AbstractVector, n::Int, fill_missing=missing)
 
     return ret
 end
+
+function collapse(df, rows::AbstractVector{Symbol}, col::Symbol, stat::Symbol)
+    cols = vcat(rows, [col], [stat])
+    combine(groupby(df[:, cols], rows)) do g
+        row_ind = g[1, rows]
+        to_perm = DataFrame(col => format_number.(g[!, col]), stat => g[!, stat])
+        ret = permutedims(to_perm, 1)
+        select!(ret, Not(col))
+        ret = round.(ret, digits=3)
+        for i = eachindex(rows)
+            ret[!, rows[i]] .= [row_ind[i]]
+        end
+        ret
+    end
+end
+
+function collapse(df, col::Symbol, stats::AbstractVector{Symbol})
+    rets = []
+    for stat in stats
+        to_perm = DataFrame(col => format_number.(df[!, col]), stat => df[!, stat])
+        ret = permutedims(to_perm, 1)
+        select!(ret, Not(col))
+        insertcols!(ret, 1, :Metric => stat)
+        push!(rets, ret)
+    end
+    vcat(rets...)
+end
+
+function parallel_apply!(df::DataFrame, func, n=10)
+    bins = Int.(collect(1:floor(nrow(df)/n):nrow(df)))
+    if bins[end] != nrow(df)
+        push!(bins, nrow(df))
+    end
+    partitions = [@view df[bins[i]:bins[i+1], :] for i in 1:length(bins)-1]
+
+    @threads for part in partitions
+        func(part)
+    end
+    df
+end;
+
+function parallel_apply(df::DataFrame, func, n=10)
+    bins = Int.(collect(1:floor(nrow(df)/n):nrow(df)))
+    if bins[end] != nrow(df)
+        push!(bins, nrow(df))
+    end
+    partitions = [@view df[bins[i]:bins[i+1], :] for i in 1:length(bins)-1]
+    tasks = []
+
+    @sync for part in partitions
+        push!(tasks, @spawn func(part))
+    end
+
+    reduce(vcat, fetch.(tasks))
+end;
+
+function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
+    df[!, bin_col_name] .= 0
+    bins = nquantile(df[!, col], n_bins)
+
+    for i in 1:length(bins)-1
+        lower = bins[i]
+        upper = bins[i+1]
+
+        if i == 1
+            df[df[!, col] .< upper, bin_col_name] .= i
+        elseif i == length(bins)-1
+            df[df[!, col] .>= lower, bin_col_name] .= i
+        else
+            df[df[!, col] .>= lower .&& df[!, col] .< upper, bin_col_name] .= i
+        end
+    end
+    df
+end;
 
 end
