@@ -16,7 +16,7 @@ plot_template.layout.xaxis[:linecolor] = default_grid_color
 plot_template.layout.yaxis[:gridcolor] = default_grid_color
 plot_template.layout.yaxis[:zerolinecolor] = default_grid_color
 plot_template.layout.yaxis[:linecolor] = default_grid_color
-plot_template.layout.paper_bgcolor=:white
+plot_template.layout.paper_bgcolor = :white
 # plot_template.layout.width=1460
 # plot_template.layout.height=500
 
@@ -36,3 +36,6 @@ index_codes = Dict(
     "IC" => "000905.SH",
     "IM" => "000852.SH"
 );
+
+using Dates
+holidays = Set(Date.(readlines("/home/qdu/projects/jl-utils/holidays.txt")))

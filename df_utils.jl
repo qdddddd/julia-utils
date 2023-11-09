@@ -10,8 +10,8 @@ import .CommonUtils.squeeze
 import .CommonUtils.format_number
 
 
-head(df, n=5) = df[1:n, :]
-tail(df, n=5) = df[end-n+1:end, :]
+head(df, n=5) = df[1:min(nrow(df), n), :]
+tail(df, n=5) = df[max(end-n+1, 1):end, :]
 
 _eq(a, b) = ifelse(b === missing, ismissing(a), a == b)
 ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]

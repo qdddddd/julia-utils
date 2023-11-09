@@ -1,11 +1,8 @@
 module CommonUtils
 using Base: AbstractVecOrTuple
-export to_datetime, sample, count_values, squeeze, combine_plots, format_number, join_str, format_dt, colwise, rowwise
+export to_datetime, sample, count_values, squeeze, combine_plots, format_number, join_str, format_dt, colwise, rowwise, get_fee_rate
 
-using Dates
-using StatsBase
-using PlotlyJS
-using Statistics
+using Dates, StatsBase, PlotlyJS, Statistics
 
 function to_datetime(ts::Int64, precision::Int=6)::DateTime
     epoch = 621355968000000000
@@ -156,5 +153,8 @@ rowwise(f, A) = [f(view(A, i, :)) for i in 1:size(A, 1)]
 colwise(f, A) = [f(view(A, :, j)) for j in 1:size(A, 2)]
 
 product(x::AbstractArray, y::AbstractArray) = vec(Iterators.product(x, y) |> collect)
+
+get_fee_rate(date::String) = date < "20230828" ? 0.00065 : 0.00035
+get_fee_rate(date::Date) = date < Date(2023, 8, 28) ? 0.00065 : 0.00035
 
 end

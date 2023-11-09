@@ -1,7 +1,7 @@
 module PlotFunc
 export plot_group, plot_curves, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_table, to_file
 
-using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS
+using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors
 
 include("common.jl")
 include("constants.jl")
@@ -127,14 +127,15 @@ function plot_table(
     legend_cols = df[!, legend] |> unique
 
     gradient = ColorSchemes.linear_blue_95_50_c20_n256
-    color_vec = range(gradient[1], gradient[end], length=nrow(tbl) * length(legend_cols))
+    all_vals = DataFrames.stack(tbl, Not(gvars)).value
+    minn = minimum(all_vals)
+    maxx = maximum(all_vals)
     header_color = :white
 
     ret = []
     for g in (split === nothing ? [tbl] : groupby(tbl, split))
         nums = DataFrames.stack(g, Not(gvars))
-        perm = sortperm(nums.value)
-        nums[!, :value] = color_vec[[tup[1] for tup in sort([(i, perm[i]) for i in 1:length(perm)], by=(x -> x[2]))]]
+        nums[!, :value] = weighted_color_mean.(1 .- (nums.value .- minn) ./ (maxx - minn), gradient[1], gradient[end])
         color_df = unstack(nums)
 
         if (split !== nothing)
