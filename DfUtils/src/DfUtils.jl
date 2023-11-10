@@ -1,14 +1,12 @@
 module DfUtils
-export head, tail, ffill, backfill, interpolate, from_hdf, shift, fillna, fillna!, collapse, parallel_apply, parallel_apply!, add_bins!
+export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!
 
-using DataFrames, DataFramesMeta, Base.Threads, StatsBase
-include("io.jl")
-import .IO.read_hdf
-include("common.jl")
-import .CommonUtils.to_datetime
-import .CommonUtils.squeeze
-import .CommonUtils.format_number
+using DataFrames, DataFramesMeta, Base.Threads, StatsBase, HDF5, FileIO
+using CommonUtils
 
+function read_hdf(filename::AbstractString)
+    return load(filename)
+end
 
 head(df, n=5) = df[1:min(nrow(df), n), :]
 tail(df, n=5) = df[max(end-n+1, 1):end, :]

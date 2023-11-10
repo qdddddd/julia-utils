@@ -38,4 +38,4 @@ index_codes = Dict(
 );
 
 using Dates
-holidays = Set(Date.(readlines("/home/qdu/projects/jl-utils/holidays.txt")))
+holidays = Set(Date.(readlines(joinpath(@__DIR__, "holidays.txt"))))

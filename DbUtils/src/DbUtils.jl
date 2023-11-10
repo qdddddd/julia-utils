@@ -1,13 +1,11 @@
 module DbUtils
 
-export connect_ch, reconnect, conn, execute_queries, get_md, get_od, mc_isfile, mc_ispath, mc_readdir
+export connect_ch, reconnect, conn, execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
+using CommonUtils
 
-include("common.jl")
-import .CommonUtils.format_dt
-
-include("constants.jl")
+include("../../constants.jl")
 
 ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
 _minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
@@ -258,7 +256,11 @@ end
 
 # mssql
 using PyCall
-@pyimport pymssql
+const pymssql = PyNULL()
+
+function __init__()
+    copy!(pymssql, pyimport("pymssql"))
+end
 
 function query_mssql(query::String)
     sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
@@ -272,6 +274,7 @@ function query_mssql(query::String)
 end
 
 function query_mssql(queries::Vector{String})
+    sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
     res = []
 
     sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")

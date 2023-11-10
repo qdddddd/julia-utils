@@ -1,0 +1,16 @@
+name = "SqlFunc"
+uuid = "9d28e109-c923-48cb-96da-18dc45ec1574"
+authors = ["qdu <q.du@connect.ust.hk>"]
+version = "0.1.0"
+
+[deps]
+ClickHouse = "82f2e89e-b495-11e9-1d9d-fb40d7cf2130"
+ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
+CommonUtils = "9541029e-e551-4512-8835-79edf4da4ed3"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
+DbUtils = "ac259bcb-f7be-48fd-a9e7-b5e0283ab065"
+DfUtils = "38c3f4fe-3d7d-4abc-beac-81693fc95778"
+FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+PlotlyJS = "f0f68f2c-4968-5e81-91da-67840de0976a"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"

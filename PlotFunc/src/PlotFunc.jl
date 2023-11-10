@@ -1,18 +1,15 @@
 module PlotFunc
-export plot_group, plot_curves, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_table, to_file
+export palette, plot_group, plot_curves, plot_table, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_md, to_file, get_x_domain, get_y_domain
 
 using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors
+using CommonUtils, DfUtils, DbUtils
+include("../../constants.jl")
 
-include("common.jl")
-include("constants.jl")
-include("df_utils.jl")
-include("db_utils.jl")
-
-global palette = ColorSchemes.Set2_8
+palette = ColorSchemes.Set2_8
 
 function plot_group(grouped, stat::Symbol, legends, gvars; real=false, showlegend=false, title=nothing, clrs=nothing)
-    if clrs !== nothing
-        global palette = clrs
+    if clrs === nothing
+        clrs = palette
     end
 
     ticklabel = []
@@ -50,7 +47,7 @@ function plot_group(grouped, stat::Symbol, legends, gvars; real=false, showlegen
             bar(
                 x=df.x, y=df[!, y[1]],
                 name="$(y[1])",
-                marker=attr(color=palette[y[2]]),
+                marker=attr(color=clrs[y[2]]),
                 showlegend=showlegend
             )
             for y in zip([string(f) for f in variable], 1:length(variable))
@@ -60,7 +57,7 @@ function plot_group(grouped, stat::Symbol, legends, gvars; real=false, showlegen
             bar(
                 x=df.x, y=df[!, y[1]],
                 name="$(y[1])",
-                marker=attr(color=palette[y[2]]),
+                marker=attr(color=clrs[y[2]]),
                 showlegend=showlegend
             )
             for y in zip(["""$(join(f, ", "))""" for f in eachrow(variable)], 1:nrow(variable))

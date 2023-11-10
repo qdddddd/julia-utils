@@ -1,8 +1,10 @@
 module CommonUtils
 using Base: AbstractVecOrTuple
-export to_datetime, sample, count_values, squeeze, combine_plots, format_number, join_str, format_dt, colwise, rowwise, get_fee_rate
+export to_datetime, sample, count_values, squeeze, combine_plots, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile
 
 using Dates, StatsBase, PlotlyJS, Statistics
+
+include("precompiler.jl")
 
 function to_datetime(ts::Int64, precision::Int=6)::DateTime
     epoch = 621355968000000000
