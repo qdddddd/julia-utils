@@ -2,7 +2,7 @@ module DfUtils
 export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!
 
 using DataFrames, DataFramesMeta, Base.Threads, StatsBase, HDF5, FileIO
-using CommonUtils
+using CommonUtils: to_datetime, squeeze, format_number
 
 function read_hdf(filename::AbstractString)
     return load(filename)

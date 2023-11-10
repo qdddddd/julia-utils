@@ -3,7 +3,7 @@ module DbUtils
 export connect_ch, reconnect, conn, execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
-using CommonUtils
+using CommonUtils: format_dt, to_datetime
 
 include("../../constants.jl")
 
@@ -39,7 +39,7 @@ function execute_queries(queries, to_throw=false)
 end
 
 function get_md(symbol, date, nan=true)
-    dt = CommonUtils.format_dt(date)
+    dt = format_dt(date)
     postfix = dt < "20230223" ? "" : "-lc"
     bucket = (endswith(symbol, "SZ") ? "sze" : "sse") * postfix
     fn = "$(dt)/$(symbol)_$(dt).gz"
@@ -64,7 +64,7 @@ function get_md(symbol, date, nan=true)
 end
 
 function get_index(name, date)
-    dt = CommonUtils.format_dt(date)
+    dt = format_dt(date)
     bucket = "ivocapmarket"
     fn = "$(dt)/$(index_codes[name]).csv.gz"
 
@@ -98,7 +98,7 @@ function get_od(symbol, date)
             df[!, :Timestamp] = DateTime.(df.Timestamp, _date_fmt)
             df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
         else
-            df[!, :Timestamp] = CommonUtils.to_datetime.(df.Timestamp, 3)
+            df[!, :Timestamp] = to_datetime.(df.Timestamp, 3)
         end
     end
 
@@ -231,7 +231,7 @@ function get_prev_trading_day(date::Date)
 end
 
 function get_future_md(symbol, date, nan=true)
-    dt = CommonUtils.format_dt(date)
+    dt = format_dt(date)
     bucket = "option"
     fn = "$(dt)/$(symbol)_$(dt).gz"
 

@@ -1,5 +1,5 @@
 module PlotFunc
-export palette, plot_group, plot_curves, plot_table, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_md, to_file, get_x_domain, get_y_domain
+export palette, plot_group, plot_curves, plot_table, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_md, to_file, get_x_domain, get_y_domain, combine_plots
 
 using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors
 using CommonUtils, DfUtils, DbUtils
@@ -400,6 +400,80 @@ function get_y_domain(i, n, space, top_margin=0)
     w = (1 - top_margin - (n - 1) * space) / n
     s = 1 - top_margin - (i - 1) * (w + space)
     [s - w, s]
+end
+
+function combine_plots(vec; rows=0, cols=0, title="", horizontal_spacing=0.05, vertical_spacing=0.05, width=1350, height=300, showlegend=true, yaxis_range=nothing)
+    if length(vec) == 0
+        return
+    end
+
+    len = length(vec)
+
+    if rows == 0 && cols == 0
+        r = len
+        c = 1
+    elseif rows == 0
+        r = Int(ceil(len / cols))
+        c = cols
+    elseif cols == 0
+        r = rows
+        c = Int(ceil(len / rows))
+    else
+        r = rows
+        c = cols
+    end
+
+    empty = []
+    if (len < r * c)
+        for _ = len+1:r*c
+            push!(empty, plot())
+        end
+    end
+
+    p = make_subplots(
+        rows=r, cols=c,
+        subplot_titles=reshape([(haskey(s.plot.layout.title, :text) ? s.plot.layout.title[:text] : "") for s in vcat(vec, empty)], (r, c)),
+        horizontal_spacing=horizontal_spacing, vertical_spacing=vertical_spacing, shared_yaxes=yaxis_range !== nothing
+    )
+
+    n = 1
+    for i in 1:r
+        for j in 1:c
+            for t in vec[n].plot.data
+                restyle!(t, showlegend=(showlegend && n == 1))
+                add_trace!(p, t, row=i, col=j)
+            end
+
+            if n == length(vec)
+                ltt = nothing
+                if haskey(vec[1].plot.layout.legend, :title)
+                    if haskey(vec[1].plot.layout.legend[:title], :text)
+                        ltt = vec[1].plot.layout.legend[:title][:text]
+                    end
+                end
+
+                xt = nothing
+                if haskey(vec[1].plot.layout.xaxis, :title)
+                    xt_dict = vec[1].plot.layout.xaxis[:title]
+                    if xt_dict !== nothing && haskey(xt_dict, :text)
+                        xt = vec[1].plot.layout.xaxis[:title][:text]
+                    end
+                end
+
+                relayout!(p, width=width, height=r * height, title_text=title, title=attr(x=0.46, xanchor="center"),
+                    legend=attr(title_text=ltt), xaxis_title=xt, margin=attr(r=20)
+                )
+
+                for i = 1:c:n
+                    relayout!(p, Dict(Symbol("yaxis$(ifelse(i==1, "", i))_range") => yaxis_range))
+                end
+
+                return p
+            end
+
+            n += 1
+        end
+    end
 end
 
 end
