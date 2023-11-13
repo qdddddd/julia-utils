@@ -7,11 +7,21 @@ using CommonUtils: format_dt, to_datetime
 
 include("../../constants.jl")
 
-ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
-_minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
-minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
+global _conn = nothing
+global ch_conf = nothing
+global mini_cfg = nothing
+
+function __init__()
+    global ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
+    global _conn = connect_ch()
+    _minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
+    global minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
+
+    copy!(pymssql, pyimport("pymssql"))
+end
 
 function connect_ch()
+    global ch_conf
     conn = ClickHouse.connect(ch_conf["host"], 9000; username=ch_conf["user"], password=ch_conf["password"])
     ClickHouse.execute(conn, "SET max_memory_usage = 1280000000000")
     conn
@@ -22,8 +32,14 @@ function reconnect()
     _conn
 end
 
-_conn = connect_ch()
-conn() = is_connected(_conn) ? _conn : reconnect()
+function conn()
+    global _conn
+    if is_connected(_conn)
+        return _conn
+    else
+        return reconnect()
+    end
+end
 
 function execute_queries(queries, to_throw=false)
     for q in queries
@@ -46,6 +62,7 @@ function get_md(symbol, date, nan=true)
 
     if !mc_isfile("$(bucket)/$(fn)") return nothing end
 
+    global minio_cfg
     df = CSV.read(
         s3_get(minio_cfg, bucket, fn), DataFrame;
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
@@ -73,6 +90,7 @@ function get_index(name, date)
         return
     end
 
+    global minio_cfg
     df = CSV.read(s3_get(minio_cfg, bucket, fn), DataFrame; select=[:TimeInMillSeconds, :LastPrice])
     df = combine(groupby(df, :TimeInMillSeconds), last)
     df[!, :ExTime] = unix2datetime.(df.TimeInMillSeconds ./ 1000 .+ (8*3600))
@@ -83,6 +101,7 @@ end
 _date_fmt = dateformat"yyyy-mm-dd HH:MM:SS.s"
 
 function get_od(symbol, date)
+    global minio_cfg
     postfix = date < "20230223" ? "" : "-lc"
     bucket = (endswith(symbol, "SZ") ? "szeorder" : "sseorder") * postfix
     df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
@@ -113,6 +132,7 @@ function get_td(symbol, date)
         postfix = "-lc"
     end
 
+    global minio_cfg
     bucket = (endswith(symbol, "SZ") ? "szetrade" : "ssetrade") * postfix
     df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
 
@@ -146,6 +166,7 @@ function mc_readdir(path)
         path = path * "/"
     end
 
+    global minio_cfg
     readdir(S3Path("s3://$(path)", config=minio_cfg))
 end
 
@@ -237,6 +258,7 @@ function get_future_md(symbol, date, nan=true)
 
     if !mc_isfile("$(bucket)/$(fn)") return nothing end
 
+    global minio_cfg
     df = CSV.read(
         s3_get(minio_cfg, bucket, fn), DataFrame;
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
@@ -257,10 +279,6 @@ end
 # mssql
 using PyCall
 const pymssql = PyNULL()
-
-function __init__()
-    copy!(pymssql, pyimport("pymssql"))
-end
 
 function query_mssql(query::String)
     sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
