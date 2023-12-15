@@ -5,27 +5,21 @@ using DataFrames, StatsBase, DataFramesMeta, ClickHouse
 using DfUtils, DbUtils, CommonUtils
 include("../../constants.jl")
 
-function get_st(symbol, date)
-    select_df(
-        conn(),
-        """
-    WITH '$(format_dt(date))' as dt
-    SELECT * FROM winddb_mirror.asharest FINAL
-    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-        AND S_INFO_WINDCODE = '$(symbol)'
-"""
-    )
+function get_st(date, symbol)
+    select_df(conn(), """
+        WITH '$(format_dt(date))' as dt
+        SELECT * FROM winddb_mirror.asharest FINAL
+        WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+            AND S_INFO_WINDCODE = '$(symbol)'
+    """)
 end
 
 function get_st(date)
-    select_df(
-        conn(),
-        """
-    WITH '$(format_dt(date))' as dt
-    SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
-    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-"""
-    )
+    select_df(conn(), """
+        WITH '$(format_dt(date))' as dt
+        SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
+        WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+    """)
 end
 
 function get_index_members(conn, date, index, include_st=false)
@@ -38,130 +32,121 @@ function get_index_members(conn, date, index, include_st=false)
         index_col = "S_INFO_WINDCODE"
     end
 
-    select_df(
-        conn,
-        """
-    WITH '$(format_dt(date))' AS dt
-    SELECT DISTINCT S_CON_WINDCODE Code FROM $(table)
-    WHERE $(index_col) = '$(index_code)'
-        AND (S_CON_OUTDATE > dt OR S_CON_OUTDATE is NULL)
-        AND S_CON_INDATE <= dt
-        $(include_st ? "" : """
-        AND Code NOT IN (
-            SELECT DISTINCT S_INFO_WINDCODE
-            FROM winddb_mirror.asharest FINAL
-            WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-        )
-        """)
-"""
-    )
+    select_df(conn, """
+        WITH '$(format_dt(date))' AS dt
+        SELECT DISTINCT S_CON_WINDCODE Code FROM $(table)
+        WHERE $(index_col) = '$(index_code)'
+            AND (S_CON_OUTDATE > dt OR S_CON_OUTDATE is NULL)
+            AND S_CON_INDATE <= dt
+            $(include_st ? "" : """
+                AND Code NOT IN (
+                    SELECT DISTINCT S_INFO_WINDCODE
+                    FROM winddb_mirror.asharest FINAL
+                    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+                )
+            """)
+    """)
 end
 
 function get_apr_info(date, codes, c=nothing)
     if c === nothing
         c = conn()
     end
-    select_df(
-        c,
-        """
-    WITH '$(CommonUtils.format_dt(date))' AS dt
-        SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue,
-               (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
-        FROM (
-            SELECT * FROM (
-                -- 基本信息
-                SELECT S_INFO_WINDCODE                    Code,
-                       toDecimal64(S_DQ_OPEN, 4)          OpenPrice,
-                       toDecimal64(S_DQ_CLOSE, 4)         ClosePrice,
-                       toDecimal64(S_DQ_PRECLOSE, 4)      PreClosePrice,
-                       toDecimal64(S_DQ_ADJFACTOR, 6)     AdjFactorRolling,
-                       toDecimal64(S_DQ_AMOUNT, 4) * 1000 Amount,
-                       toInt64(S_DQ_VOLUME * 100)         Volume
-                FROM winddb_mirror.ashareeodprices FINAL
-                WHERE TRADE_DT = dt) AS TmpEodP
-            JOIN (
-                -- 查市值数据
-                SELECT S_INFO_WINDCODE                  Code,
-                       toDecimal64(S_VAL_MV, 4) * 10000 TotalMarketValue,
-                       toDecimal64(S_DQ_MV, 4) * 10000  FreeMarketValue
-                FROM winddb_mirror.ashareeodderivativeindicator FINAL
-                WHERE TRADE_DT = dt) AS TmpEodC
-            ON TmpEodP.Code = TmpEodC.Code
-            WHERE abs(ClosePrice) > 0.0001 AND abs(PreClosePrice) > 0.0001
-                AND Code IN ($(CommonUtils.join_str(codes)))
-        ) AS ET
-        LEFT JOIN (
-            SELECT EX_DT Date, WIND_CODE Code, CASH_DVD_PER_SH_AFTER_TAX CashRate, STK_DVD_PER_SH StrikeRate
-            FROM winddb_mirror.asharedividend FINAL
-            WHERE Date = dt
-        ) AS DT
-        ON ET.Code = DT.Code
-"""
-    )
+    select_df(c, """
+        WITH '$(CommonUtils.format_dt(date))' AS dt
+            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue,
+                   (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
+            FROM (
+                SELECT * FROM (
+                    -- 基本信息
+                    SELECT S_INFO_WINDCODE                    Code,
+                           toDecimal64(S_DQ_OPEN, 4)          OpenPrice,
+                           toDecimal64(S_DQ_CLOSE, 4)         ClosePrice,
+                           toDecimal64(S_DQ_PRECLOSE, 4)      PreClosePrice,
+                           toDecimal64(S_DQ_ADJFACTOR, 6)     AdjFactorRolling,
+                           toDecimal64(S_DQ_AMOUNT, 4) * 1000 Amount,
+                           toInt64(S_DQ_VOLUME * 100)         Volume
+                    FROM winddb_mirror.ashareeodprices FINAL
+                    WHERE TRADE_DT = dt) AS TmpEodP
+                JOIN (
+                    -- 查市值数据
+                    SELECT S_INFO_WINDCODE                  Code,
+                           toDecimal64(S_VAL_MV, 4) * 10000 TotalMarketValue,
+                           toDecimal64(S_DQ_MV, 4) * 10000  FreeMarketValue
+                    FROM winddb_mirror.ashareeodderivativeindicator FINAL
+                    WHERE TRADE_DT = dt) AS TmpEodC
+                ON TmpEodP.Code = TmpEodC.Code
+                WHERE abs(ClosePrice) > 0.0001 AND abs(PreClosePrice) > 0.0001
+                    AND Code IN ($(CommonUtils.join_str(codes)))
+            ) AS ET
+            LEFT JOIN (
+                SELECT EX_DT Date, WIND_CODE Code, CASH_DVD_PER_SH_AFTER_TAX CashRate, STK_DVD_PER_SH StrikeRate
+                FROM winddb_mirror.asharedividend FINAL
+                WHERE Date = dt
+            ) AS DT
+            ON ET.Code = DT.Code
+    """)
 end
 
 function get_apr_simple_ver(date, rolling_window, codes)
-    select_df(
-        conn(),
-        """
-    WITH '$(CommonUtils.format_dt(date))' AS dt,
-        $(rolling_window) AS rw,
-        dates AS (
-           SELECT DISTINCT TRADE_DT
-           FROM winddb_mirror.ashareeodprices FINAL
-           WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
-           ORDER BY TRADE_DT DESC
-           LIMIT rw
-        ),
-        dates100 AS (
-           SELECT DISTINCT TRADE_DT
-           FROM winddb_mirror.ashareeodprices FINAL
-           WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
-           ORDER BY TRADE_DT DESC
-           LIMIT 100
-        )
-    SELECT Code,
-          AvgAmount,
-          AvgAmplitude,
-          AvgTRTotal,
-          AvgTRFree,
-          AvgTotalMarketValue,
-          AvgFreeMarketValue
-    FROM (
-        -- 历史平均成交额&振幅
-        SELECT *, greatest(avgAmount, avgAmount100) AvgAmount
+    select_df(conn(), """
+        WITH '$(CommonUtils.format_dt(date))' AS dt,
+            $(rolling_window) AS rw,
+            dates AS (
+               SELECT DISTINCT TRADE_DT
+               FROM winddb_mirror.ashareeodprices FINAL
+               WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
+               ORDER BY TRADE_DT DESC
+               LIMIT rw
+            ),
+            dates100 AS (
+               SELECT DISTINCT TRADE_DT
+               FROM winddb_mirror.ashareeodprices FINAL
+               WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
+               ORDER BY TRADE_DT DESC
+               LIMIT 100
+            )
+        SELECT Code,
+              AvgAmount,
+              AvgAmplitude,
+              AvgTRTotal,
+              AvgTRFree,
+              AvgTotalMarketValue,
+              AvgFreeMarketValue
         FROM (
-            SELECT S_INFO_WINDCODE                               Code,
-                   avg(S_DQ_AMOUNT) * 1000                       avgAmount,
-                   avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
-            FROM winddb_mirror.ashareeodprices FINAL
-            WHERE TRADE_DT IN dates
-            GROUP BY Code
-        ) AS A
+            -- 历史平均成交额&振幅
+            SELECT *, greatest(avgAmount, avgAmount100) AvgAmount
+            FROM (
+                SELECT S_INFO_WINDCODE                               Code,
+                       avg(S_DQ_AMOUNT) * 1000                       avgAmount,
+                       avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
+                FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT IN dates
+                GROUP BY Code
+            ) AS A
+            JOIN (
+                SELECT S_INFO_WINDCODE Code,
+                       avg(S_DQ_AMOUNT) * 1000 avgAmount100
+                FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT IN dates100
+                GROUP BY Code
+            ) AS B
+            ON A.Code = B.Code
+        ) AS TmpEodA
         JOIN (
-            SELECT S_INFO_WINDCODE Code,
-                   avg(S_DQ_AMOUNT) * 1000 avgAmount100
-            FROM winddb_mirror.ashareeodprices FINAL
-            WHERE TRADE_DT IN dates100
-            GROUP BY Code
-        ) AS B
-        ON A.Code = B.Code
-    ) AS TmpEodA
-    JOIN (
-       -- 历史平均市值&换手率
-       SELECT S_INFO_WINDCODE        Code,
-              avg(S_DQ_TURN)         AvgTRTotal,
-              avg(S_DQ_FREETURNOVER) AvgTRFree,
-              avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
-              avg(S_DQ_MV) * 10000   AvgFreeMarketValue
-       FROM winddb_mirror.ashareeodderivativeindicator FINAL
-       WHERE TRADE_DT IN dates
-       GROUP BY Code
-       ) AS TmpEodT
-    ON TmpEodA.Code = TmpEodT.Code
-    WHERE Code IN ($(CommonUtils.join_str(codes)))
-"""
-    )
+           -- 历史平均市值&换手率
+           SELECT S_INFO_WINDCODE        Code,
+                  avg(S_DQ_TURN)         AvgTRTotal,
+                  avg(S_DQ_FREETURNOVER) AvgTRFree,
+                  avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
+                  avg(S_DQ_MV) * 10000   AvgFreeMarketValue
+           FROM winddb_mirror.ashareeodderivativeindicator FINAL
+           WHERE TRADE_DT IN dates
+           GROUP BY Code
+           ) AS TmpEodT
+        ON TmpEodA.Code = TmpEodT.Code
+        WHERE Code IN ($(CommonUtils.join_str(codes)))
+    """)
 end
 
 function get_table(conn, program_id, name; ih_col_name="InputHash", cond="")
@@ -189,15 +174,12 @@ end
 function get_prices(conn, dates, ids; exchange=nothing)
     exchange_condition = exchange !== nothing ? "AND endsWith(Symbol, '$(exchange)')" : ""
 
-    prices = select_df(
-        conn,
-        """
-    SELECT DISTINCT Symbol, Date, toFloat32(PreClose) PreClose, toFloat32(OpenPrice) OpenPrice, toFloat32(Price) EodPrice
-    FROM $(input_tb)
-    WHERE Id IN ($(join_str(ids))) AND Date IN ($(join_str(dates))) $(exchange_condition)
-    ORDER BY Date
-"""
-    )
+    prices = select_df(conn, """
+        SELECT DISTINCT Symbol, Date, toFloat32(PreClose) PreClose, toFloat32(OpenPrice) OpenPrice, toFloat32(Price) EodPrice
+        FROM $(input_tb)
+        WHERE Id IN ($(join_str(ids))) AND Date IN ($(join_str(dates))) $(exchange_condition)
+        ORDER BY Date
+    """)
 
     return prices
 end
@@ -215,16 +197,13 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         add_bins!(property_, to_classify, n_bins=10)
 
         execute(conn, """DROP TABLE IF EXISTS Bins""")
-        execute(
-            conn,
-            """
-    CREATE TEMPORARY TABLE Bins (
-        Symbol FixedString(9),
-        $(to_classify) Float64,
-        Bin Int
-    )
-"""
-        )
+        execute(conn, """
+            CREATE TEMPORARY TABLE Bins (
+                Symbol FixedString(9),
+                $(to_classify) Float64,
+                Bin Int
+            )
+        """)
 
         dict = Dict(pairs(eachcol(property_)))
         insert(conn, "Bins", [dict])
@@ -254,17 +233,14 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         end
 
         execute(conn, """DROP TABLE IF EXISTS OpenPortions""")
-        execute(
-            conn,
-            """
-    CREATE TEMPORARY TABLE OpenPortions (
-        Date Date,
-        Symbol FixedString(9),
-        OpenPortion Float32,
-        TovBin Int
-    )
-"""
-        )
+        execute(conn, """
+            CREATE TEMPORARY TABLE OpenPortions (
+                Date Date,
+                Symbol FixedString(9),
+                OpenPortion Float32,
+                TovBin Int
+            )
+        """)
 
         dict = Dict(pairs(eachcol(tov_[!, [:Date, :Symbol, :OpenPortion, :TovBin]])))
         insert(conn, "OpenPortions", [dict])
@@ -286,8 +262,8 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
          dates AS (SELECT DISTINCT Date FROM hp.StockPools WHERE Date IN ($(join_str(dates)))),
          POOL AS (
          $(pool === nothing ? """
-           SELECT DISTINCT Symbol, Date, true TodayIn, true PrevDayIn, Price EodPrice, PreClose, OpenPrice FROM $(input_tb)
-           WHERE Id IN ids AND Date IN dates
+            SELECT DISTINCT Symbol, Date, true TodayIn, true PrevDayIn, Price EodPrice, PreClose, OpenPrice FROM $(input_tb)
+            WHERE Id IN ids AND Date IN dates
          """ : """
             SELECT * FROM
             (
@@ -312,17 +288,25 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                 WHERE Date IN dates
             ) AS R
             ON L.Date = R.Date AND L.Symbol = R.Symbol
-        """)
+         """)
          )
     SELECT * FROM (
         SELECT * FROM (
-            SELECT * FROM (
+            SELECT *,
+                   Pnl / TotalCapital Rtn,
+                   OvernightPnl / TotalCapital OvernightRtn,
+                   IntradayPnl / TotalCapital IntradayRtn,
+                   Pnl / Turnover RtnOfTov,
+                   OvernightPnl / Turnover OvernightRtnOfTov,
+                   IntradayPnl / Turnover IntradayRtnOfTov,
+                   Turnover / TotalCapital TurnoverRatio,
+                   NetPositionValue / TotalCapital NetPositionValueRatio
+            FROM (
                 SELECT InputHash, Date,
                        $(bin ? "" : "--") Bin,
                        $(tov_bin ? "" : "--") TovBin,
                        sum((Inventory+Position) * EodPrice) AS NetPositionValue,
-                       sum((Position) * EodPrice) AS PositionValue,
-                       sum(Pnl) AS T0Pnl,
+                       sum(Pnl) AS Pnl,
                        sum(OvernightPnl) AS OvernightPnl,
                        sum(IntradayPnl) AS IntradayPnl,
                        sum(Turnover) AS Turnover,
@@ -340,12 +324,10 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                                if(TodayIn, if(PrevDayIn, ET.IntradayPnl, ET.IntradayPnl - IntradayInventoryPnl), 0) IntradayPnl,
                                if(TodayIn, ET.Turnover, 0) Turnover,
                                if(TodayIn, ET.Fee, 0) Fee,
-                               if(TodayIn, if(PrevDayIn, ET.Pnl, ET.Pnl - IntradayInventoryPnl - ET.OvernightPnl), ET.OvernightPnl) T0Pnl
+                               if(TodayIn, if(PrevDayIn, ET.Pnl, ET.Pnl - IntradayInventoryPnl - ET.OvernightPnl), ET.OvernightPnl) Pnl
                         FROM $(eod_tb) AS ET
-                        $(pool === nothing ? "" : """
-                            INNER JOIN POOL
-                            ON ET.Symbol = POOL.Symbol AND ET.Date = POOL.Date
-                        """)
+                        INNER JOIN POOL
+                        ON ET.Symbol = POOL.Symbol AND ET.Date = POOL.Date
                         WHERE InputHash IN ids AND Date IN dates $(exchange_cond) $(subset_cond)
                     ) AS ET
                     $(to_classify !== nothing ? """
@@ -371,6 +353,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        groupArray(WeightedCapital)[1] WeightedCapital,
                        groupArray(Skewness)[1] Skewness,
                        groupArray(PositionLimitFactor)[1] PLF,
+                       groupArray(QuoteRatio)[1] QuoteRatio,
                        groupArray(BiasFactor)[1] BiasFactor,
                        groupArray(Offset)[1] AS Offset,
                        groupArray(BuyOffset)[1] AS BuyOffset,
@@ -386,6 +369,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        groupArray(TradeWindow)[1] AS TradeWindow,
                        groupArray(NTradesPerSignal)[1] AS NTradesPerSignal,
                        count(DISTINCT Symbol) AS NSymbols,
+                       countIf(OpenPosition > 0) AS NLongs,
                        if(Capital != 0, Capital*1e8, WeightedCapital*1e4*NSymbols) AS TotalCapital
                 FROM (
                     SELECT *,
@@ -408,7 +392,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         SELECT Instrument Symbol, Date,
                sum(Position) NetPositionReal,
                sum(Poundage) FeeReal,
-               sum(PnlToday + PnlYestoday - Poundage) T0PnlReal,
+               sum(PnlToday + PnlYestoday - Poundage) PnlReal,
                sum(TurnOver) TurnoverReal
         FROM (
             SELECT * FROM datahouse.ProfitTableDistinctView
@@ -420,20 +404,6 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     """ : "")
     SETTINGS max_memory_usage = 800000000000
     """
-    # query_by_dt = """
-    # SELECT
-    # $(with_real ? "" : "--") sum(NetPositionReal * EodPrice) AS NetPositionValueReal,
-    # $(with_real ? "" : "--") sum(T0PnlReal) AS T0PnlReal,
-    # $(with_real ? "" : "--") sum(TurnoverReal) AS TurnoverReal,
-    # --sum(BuyTurnover) AS BuyTurnover,
-    # --sum(SellTurnover) AS SellTurnover,
-    # --$(with_close ? "" : "--") if(NetBuyOpenValue = 0, 0, sum(SellCloseValue) / NetBuyOpenValue) AS BuyClosedPortion,
-    # --$(with_close ? "" : "--") if(NetSellOpenValue = 0, 0, sum(BuyCloseValue) / NetSellOpenValue) AS SellClosedPortion,
-    # --sum(LmpOrderAmount) / (sum(LmpOrderAmount) + sum(FakOrderAmount)) AS QuotePortion,
-    # $(with_real ? "" : "--") sum(FeeReal) AS FeeReal,
-    # FROM ($(query_results)) AS RT
-    # GROUP BY Date, InputHash $(bin ? ", Bin" : "") $(tov_bin ? ", TovBin" : "")
-    # """
 
     query = """
     SELECT InputHash,
@@ -445,6 +415,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            groupArray(WeightedCapital)[1] WeightedCapital,
            groupArray(Skewness)[1] AS Skewness,
            groupArray(PLF)[1] AS PLF,
+           groupArray(QuoteRatio)[1] AS QuoteRatio,
            -- groupArray(RealStatic)[1] AS RealStatic,
            -- groupArray(RealOpen)[1] AS RealOpen,
            -- groupArray(StaticParam)[1] AS StaticParam,
@@ -468,14 +439,22 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            groupArray(NTradesPerSignal)[1] AS NTradesPerSignal,
            -- groupArray(Sep)[1] Sep,
            avg(NSymbols) AS NSymbols,
-           avg(TotalCapital) AS TotalCapital,
+           avg(NLongs) AS NLongs,
+           avg(TotalCapital) AS AvgTotalCapital,
+           max(TotalCapital) AS MaxTotalCapital,
            avg(NetPositionValue) AS NetPositionValue,
-           avg(PositionValue) AS PositionValue,
+           avg(NetPositionValueRatio) AS NetPositionValueRatio,
            $(with_real ? "" : "--") avg(NetPositionValueReal) AS NetPositionValueReal,
-           avg(T0Pnl) AS T0Pnl,
-           $(with_real ? "" : "--") avg(T0PnlReal) AS T0PnlReal,
+           avg(Pnl) AS Pnl,
+           avg(Rtn) AS Rtn,
+           avg(RtnOfTov) AS RtnOfTov,
+           $(with_real ? "" : "--") avg(PnlReal) AS PnlReal,
            avg(OvernightPnl) AS OvernightPnl,
+           avg(OvernightRtn) AS OvernightRtn,
+           avg(OvernightRtnOfTov) AS OvernightRtnOfTov,
            avg(IntradayPnl) AS IntradayPnl,
+           avg(IntradayRtn) AS IntradayRtn,
+           avg(IntradayRtnOfTov) AS IntradayRtnOfTov,
            --avg(BuyOpenTradePnl) AS BuyOpenTradePnl,
            --avg(SellOpenTradePnl) AS SellOpenTradePnl,
            --avg(BuyCloseTradePnl) AS BuyCloseTradePnl,
@@ -484,6 +463,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            --avg(SellForceCloseTradePnl) AS SellForceCloseTradePnl,
            --avg(FillRate) AS FillRate,
            avg(Turnover) AS Turnover,
+           avg(TurnoverRatio) AS TurnoverRatio,
            --avg(BuyTurnover) AS BuyTurnover,
            --avg(SellTurnover) AS SellTurnover,
            --avg(BuyOpenTurnover) AS BuyOpenTurnover,
@@ -521,17 +501,16 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
 
     cols = [:InputHash, :RunningFrom,
         # :OvnPriceFactor, :OvnQtyFactor,
-        :Portfolio, :Capital, :WeightedCapital, :NSymbols, :TotalCapital, :TheoModel, :Latency, :TradeWindow, :NTradesPerSignal, :PLF,
+        :Portfolio, :Capital, :WeightedCapital, :NSymbols, :NLongs, :AvgTotalCapital, :MaxTotalCapital, :TheoModel, :Latency, :TradeWindow, :NTradesPerSignal, :PLF, :QuoteRatio,
         :Offset, :BuyOffset, :SellOffset, :OffsetRange, :SkipFirstMinutes,
         :Skewness, :UnitTradingAmount, :UnitTradingAmountPair, :UnitTradingVolume, :StopCriteria, :BiasFactor,
         :Strategy,
         :PredLabel,
-        :T0Pnl, :OvernightPnl, :IntradayPnl,
+        :Pnl, :OvernightPnl, :IntradayPnl, :Rtn, :OvernightRtn, :IntradayRtn, :RtnOfTov, :OvernightRtnOfTov, :IntradayRtnOfTov,
         # :BuyOpenTradePnl, :SellOpenTradePnl, :BuyCloseTradePnl, :SellCloseTradePnl, :BuyForceCloseTradePnl, :SellForceCloseTradePnl,
-        :PositionValue,
-        :NetPositionValue,
+        :NetPositionValue, :NetPositionValueRatio,
         # :FillRate, :QuotePortion,
-        :Turnover,
+        :Turnover, :TurnoverRatio,
         # :BuyTurnover, :SellTurnover, :BuyOpenTurnover, :SellOpenTurnover, :BuyCloseTurnover, :SellCloseTurnover, :BuyForceCloseTurnover, :SellForceCloseTurnover, :BuyOpenCount, :SellOpenCount,
         :Fee,
     ]
@@ -541,7 +520,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     end
 
     if with_real
-        append!(cols, [:T0PnlReal, :NetPositionValueReal, :TurnoverReal, :FeeReal])
+        append!(cols, [:PnlReal, :NetPositionValueReal, :TurnoverReal, :FeeReal])
     end
 
     if bin
@@ -553,25 +532,16 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     end
 
     comp_avg = comp_avg[!, cols]
-    @rtransform!(comp_avg, :TurnoverRatio = :Turnover / (:TotalCapital * 2))
-    @rtransform!(comp_avg, :NetPositionValueRatio = :NetPositionValue / :TotalCapital)
-    @rtransform!(comp_avg, :PositionValueRatio = :PositionValue / :TotalCapital)
-    @rtransform!(comp_avg, :T0Rtn = :T0Pnl / :TotalCapital * 260)
-    @rtransform!(comp_avg, :T0RtnOfTov = :T0Pnl / :Turnover * 260)
-    @rtransform!(comp_avg, :OvernightRtn = :OvernightPnl / :TotalCapital * 260)
-    @rtransform!(comp_avg, :OvernightRtnOfTov = :OvernightPnl / :Turnover * 260)
-    @rtransform!(comp_avg, :IntradayRtn = :IntradayPnl / :TotalCapital * 260)
-    @rtransform!(comp_avg, :IntradayRtnOfTov = :IntradayPnl / :Turnover * 260)
 
-    @rtransform!(comp_date, :TurnoverRatio = :Turnover / (:TotalCapital * 2))
-    @rtransform!(comp_date, :NetPositionValueRatio = :NetPositionValue / :TotalCapital)
-    @rtransform!(comp_date, :PositionValueRatio = :PositionValue / :TotalCapital)
-    @rtransform!(comp_date, :T0Rtn = :T0Pnl / :TotalCapital * 260)
-    @rtransform!(comp_date, :T0RtnOfTov = :T0Pnl / :Turnover * 260)
-    @rtransform!(comp_date, :OvernightRtn = :OvernightPnl / :TotalCapital * 260)
-    @rtransform!(comp_date, :OvernightRtnOfTov = :OvernightPnl / :Turnover * 260)
-    @rtransform!(comp_date, :IntradayRtn = :IntradayPnl / :TotalCapital * 260)
-    @rtransform!(comp_date, :IntradayRtnOfTov = :IntradayPnl / :Turnover * 260)
+    comp_avg[!, :Rtn] .*= 260
+    comp_avg[!, :OvernightRtn] .*= 260
+    comp_avg[!, :IntradayRtn] .*= 260
+    comp_avg[!, :RtnOfTov] .*= 260
+    comp_avg[!, :OvernightRtnOfTov] .*= 260
+    comp_avg[!, :IntradayRtnOfTov] .*= 260
+
+    cols_to_int = [:AvgTotalCapital, :MaxTotalCapital, :NLongs, :Pnl, :NetPositionValue]
+    comp_avg[!, cols_to_int] .= Int.(round.(comp_avg[!, cols_to_int]))
 
     # comp_avg[!, :TradePnl] = comp_avg.BuyOpenTradePnl .+ comp_avg.SellOpenTradePnl .+ comp_avg.BuyCloseTradePnl .+ comp_avg.SellCloseTradePnl .+ comp_avg.BuyForceCloseTradePnl .+ comp_avg.SellForceCloseTradePnl;
     # if with_close
