@@ -22,7 +22,7 @@ end
 
 function connect_ch()
     global ch_conf
-    conn = ClickHouse.connect(ch_conf["host"], 9000; username=ch_conf["user"], password=ch_conf["password"])
+    conn = ClickHouse.connect(ch_conf["host"], parse(Int, ch_conf["port"]); username=ch_conf["user"], password=ch_conf["password"])
     ClickHouse.execute(conn, "SET max_memory_usage = 1280000000000")
     conn
 end
@@ -63,13 +63,12 @@ function get_md(symbol, date, nan=true)
     if !mc_isfile("$(bucket)/$(fn)") return nothing end
 
     global minio_cfg
-    df = CSV.read(
-        s3_get(minio_cfg, bucket, fn), DataFrame;
+    df = CSV.File(s3_get(minio_cfg, bucket, fn);
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
         types=Dict(:BidPrice1 => Float64, :AskPrice1 => Float64, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",
         ntasks=1
-    )
+    ) |> DataFrame
 
     if nan
         replace!(df[!, :BidPrice1], 0 => NaN)
@@ -86,12 +85,11 @@ function get_index(name, date)
     fn = "$(dt)/$(index_codes[name]).csv.gz"
 
     if !mc_isfile("$(bucket)/$(fn)")
-        @warn "Missing index data $(name) on $(date)"
         return
     end
 
     global minio_cfg
-    df = CSV.read(s3_get(minio_cfg, bucket, fn), DataFrame; select=[:TimeInMillSeconds, :LastPrice])
+    df = CSV.File(s3_get(minio_cfg, bucket, fn); select=[:TimeInMillSeconds, :LastPrice]) |> DataFrame
     df = combine(groupby(df, :TimeInMillSeconds), last)
     df[!, :ExTime] = unix2datetime.(df.TimeInMillSeconds ./ 1000 .+ (8*3600))
     sort!(df, :TimeInMillSeconds)
@@ -104,7 +102,7 @@ function get_od(symbol, date)
     global minio_cfg
     postfix = date < "20230223" ? "" : "-lc"
     bucket = (endswith(symbol, "SZ") ? "szeorder" : "sseorder") * postfix
-    df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
+    df = CSV.File(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz")) |> DataFrame
 
     if endswith(symbol, "SZ")
         df[!, :Timestamp] = DateTime.(df.Timestamp, _date_fmt)
