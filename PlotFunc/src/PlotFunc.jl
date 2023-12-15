@@ -5,7 +5,27 @@ using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors
 using CommonUtils, DfUtils, DbUtils
 include("../../constants.jl")
 
-palette = ColorSchemes.Set2_8
+palette = nothing
+default_color = nothing
+default_grid_color = nothing
+plot_template = nothing
+
+function __init__()
+    global palette = ColorSchemes.Set2_8
+    global default_color = ColorSchemes.Blues[6]
+    global default_grid_color = "#E5ECF6"
+    global plot_template = PlotlyJS.plot().plot.layout.template
+    plot_template.layout.plot_bgcolor = :white
+    plot_template.layout.xaxis[:gridcolor] = default_grid_color
+    plot_template.layout.xaxis[:zerolinecolor] = default_grid_color
+    plot_template.layout.xaxis[:linecolor] = default_grid_color
+    plot_template.layout.yaxis[:gridcolor] = default_grid_color
+    plot_template.layout.yaxis[:zerolinecolor] = default_grid_color
+    plot_template.layout.yaxis[:linecolor] = default_grid_color
+    plot_template.layout.paper_bgcolor = :white
+    # plot_template.layout.width=1460
+    # plot_template.layout.height=500
+end
 
 function plot_group(grouped, stat::Symbol, legends, gvars; real=false, showlegend=false, title=nothing, clrs=nothing)
     if clrs === nothing
@@ -230,6 +250,13 @@ function plot_table(
         margin_attr = attr(l=0, r=0, b=0, t=0)
     end
 
+    _column_widths = nothing
+    if column_widths !== nothing && length(column_widths) < ncols(df)
+        _column_widths = copy(column_widths)
+        remaining = length(_column_widths) - ncols(df)
+        append!(_column_widths, [(1 - sum(column_widths)) / remaining for i in 1:remaining])
+    end
+
     plot(table(
             header=attr(
                 values=["<b>$name</b>" for name in header_names],
@@ -246,7 +273,7 @@ function plot_table(
                 align=cell_align,
                 height=25
             ),
-            columnwidth=column_widths
+            columnwidth=_column_widths
         ), Layout(title_text=title, width=width, height=height, margin=margin_attr))
 end
 
