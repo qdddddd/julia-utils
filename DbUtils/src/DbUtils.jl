@@ -54,7 +54,7 @@ function execute_queries(queries, to_throw=false)
     end
 end
 
-function get_md(symbol, date, nan=true)
+function get_md(date, symbol, nan=true)
     dt = format_dt(date)
     postfix = dt < "20230223" ? "" : "-lc"
     bucket = (endswith(symbol, "SZ") ? "sze" : "sse") * postfix
@@ -98,7 +98,7 @@ end
 
 _date_fmt = dateformat"yyyy-mm-dd HH:MM:SS.s"
 
-function get_od(symbol, date)
+function get_od(date, symbol)
     global minio_cfg
     postfix = date < "20230223" ? "" : "-lc"
     bucket = (endswith(symbol, "SZ") ? "szeorder" : "sseorder") * postfix
@@ -123,7 +123,7 @@ function get_od(symbol, date)
     return df
 end
 
-function get_td(symbol, date)
+function get_td(date, symbol)
     postfix = ""
 
     if date > "20230223"
@@ -249,7 +249,7 @@ function get_prev_trading_day(date::Date)
     end
 end
 
-function get_future_md(symbol, date, nan=true)
+function get_future_md(date, symbol, nan=true)
     dt = format_dt(date)
     bucket = "option"
     fn = "$(dt)/$(symbol)_$(dt).gz"

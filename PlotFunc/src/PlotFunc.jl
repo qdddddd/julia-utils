@@ -399,7 +399,7 @@ function _plot_trades(trades, p; y=:Price, buycolor=:seagreen, sellcolor=:indian
     return p
 end
 
-function plot_md(symbol, date)
+function plot_md(date, symbol)
     plot([
             scatter(DbUtils.get_md(symbol, date), x=:ExTime, y=:BidPrice1, name="bid price",line=attr(color=:seagreen, width=1)),
             scatter(DbUtils.get_md(symbol, date), x=:ExTime, y=:AskPrice1, name="ask price",line=attr(color=:indianred, width=1))

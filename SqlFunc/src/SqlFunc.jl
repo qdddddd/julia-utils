@@ -22,7 +22,7 @@ function get_st(date)
     """)
 end
 
-function get_index_members(conn, date, index, include_st=false)
+function get_index_members(conn, date, index; include_st=false, skip_stop=false)
     index_code = index_codes[index]
     if endswith(index_code, "WI")
         table = "winddb_mirror.aindexmemberswind FINAL"
@@ -34,17 +34,24 @@ function get_index_members(conn, date, index, include_st=false)
 
     select_df(conn, """
         WITH '$(format_dt(date))' AS dt
-        SELECT DISTINCT S_CON_WINDCODE Code FROM $(table)
+        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM $(table)
         WHERE $(index_col) = '$(index_code)'
             AND (S_CON_OUTDATE > dt OR S_CON_OUTDATE is NULL)
             AND S_CON_INDATE <= dt
             $(include_st ? "" : """
                 AND Code NOT IN (
-                    SELECT DISTINCT S_INFO_WINDCODE
+                    SELECT DISTINCT toString(S_INFO_WINDCODE)
                     FROM winddb_mirror.asharest FINAL
                     WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
                 )
             """)
+            $(skip_stop ? """
+                AND Code NOT IN (
+                    SELECT DISTINCT toString(S_INFO_WINDCODE)
+                    FROM winddb_mirror.ashareeodprices FINAL
+                    WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
+                )
+            """ : "")
     """)
 end
 

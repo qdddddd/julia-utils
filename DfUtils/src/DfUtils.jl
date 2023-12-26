@@ -9,7 +9,7 @@ function read_hdf(filename::AbstractString)
 end
 
 head(df, n=5) = df[1:min(nrow(df), n), :]
-tail(df, n=5) = df[max(end-n+1, 1):end, :]
+tail(df, n=5) = df[max(end - n + 1, 1):end, :]
 
 _eq(a, b) = ifelse(b === missing, ismissing(a), a == b)
 ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]
@@ -18,17 +18,17 @@ fillna(v::AbstractVecOrMat, val) = map(x -> isnan(x) ? val : x, v)
 fillna!(v::AbstractVecOrMat, val) = map!(x -> isnan(x) ? val : x, v, v)
 fillna(df::DataFrame, val) = map(col -> fillna(col, val), eachcol(df))
 
-function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_column::Symbol=:Timestamp)
+function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_column::Symbol=:Timestamp; rev=false)
     l_tmp = DataFrame(ts_column => ts, column => missing)
-    l_tmp[!, :label] .= 1
+    l_tmp[!, :label] .= !rev
 
     r_tmp = df[!, [ts_column, column]]
-    r_tmp[!, :label] .= 0
+    r_tmp[!, :label] .= rev
 
-    joined = sort(vcat(l_tmp, r_tmp), [ts_column, :label])
+    joined = sort(vcat(l_tmp, r_tmp), [ts_column, :label], rev=rev)
     joined[!, column] .= ffill(joined[!, column])
 
-    return joined[joined.label.==1, column]
+    return joined[joined.label.==!rev, column]
 end
 
 function from_hdf(
@@ -110,7 +110,7 @@ function collapse(df, col::Symbol, stats::AbstractVector{Symbol})
 end
 
 function parallel_apply!(df::DataFrame, func, n=10)
-    bins = Int.(collect(1:floor(nrow(df)/n):nrow(df)))
+    bins = Int.(collect(1:floor(nrow(df) / n):nrow(df)))
     if bins[end] != nrow(df)
         push!(bins, nrow(df))
     end
@@ -120,10 +120,10 @@ function parallel_apply!(df::DataFrame, func, n=10)
         func(part)
     end
     df
-end;
+end
 
 function parallel_apply(df::DataFrame, func, n=10)
-    bins = Int.(collect(1:floor(nrow(df)/n):nrow(df)))
+    bins = Int.(collect(1:floor(nrow(df) / n):nrow(df)))
     if bins[end] != nrow(df)
         push!(bins, nrow(df))
     end
@@ -135,7 +135,7 @@ function parallel_apply(df::DataFrame, func, n=10)
     end
 
     reduce(vcat, fetch.(tasks))
-end;
+end
 
 function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
     df[!, bin_col_name] .= 0
@@ -146,14 +146,14 @@ function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
         upper = bins[i+1]
 
         if i == 1
-            df[df[!, col] .< upper, bin_col_name] .= i
-        elseif i == length(bins)-1
-            df[df[!, col] .>= lower, bin_col_name] .= i
+            df[df[!, col].<upper, bin_col_name] .= i
+        elseif i == length(bins) - 1
+            df[df[!, col].>=lower, bin_col_name] .= i
         else
-            df[df[!, col] .>= lower .&& df[!, col] .< upper, bin_col_name] .= i
+            df[df[!, col].>=lower.&&df[!, col].<upper, bin_col_name] .= i
         end
     end
     df
-end;
+end
 
 end
