@@ -307,7 +307,11 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                    OvernightPnl / Turnover OvernightRtnOfTov,
                    IntradayPnl / Turnover IntradayRtnOfTov,
                    Turnover / TotalCapital TurnoverRatio,
-                   NetPositionValue / TotalCapital NetPositionValueRatio
+                   NetPositionValue / TotalCapital NetPositionValueRatio,
+                   NLongs * if(Capital != 0, Capital*1e8/NSymbols, WeightedCapital*1e4) LongCapital,
+                   Pnl / LongCapital RtnOfLong,
+                   OvernightPnl / LongCapital OvernightRtnOfLong,
+                   IntradayPnl / LongCapital IntradayRtnOfLong
             FROM (
                 SELECT InputHash, Date,
                        $(bin ? "" : "--") Bin,
@@ -317,7 +321,8 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        sum(OvernightPnl) AS OvernightPnl,
                        sum(IntradayPnl) AS IntradayPnl,
                        sum(Turnover) AS Turnover,
-                       sum(Fee) AS Fee
+                       sum(Fee) AS Fee,
+                       countIf(Inventory + Position > 0) AS NLongs
                 FROM (
                     SELECT *
                            $(property !== nothing ? ", Bin" : "")
@@ -376,7 +381,6 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        groupArray(TradeWindow)[1] AS TradeWindow,
                        groupArray(NTradesPerSignal)[1] AS NTradesPerSignal,
                        count(DISTINCT Symbol) AS NSymbols,
-                       countIf(OpenPosition > 0) AS NLongs,
                        if(Capital != 0, Capital*1e8, WeightedCapital*1e4*NSymbols) AS TotalCapital
                 FROM (
                     SELECT *,
@@ -447,6 +451,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            -- groupArray(Sep)[1] Sep,
            avg(NSymbols) AS NSymbols,
            avg(NLongs) AS NLongs,
+           avg(LongCapital) AS LongCapital,
            avg(TotalCapital) AS AvgTotalCapital,
            max(TotalCapital) AS MaxTotalCapital,
            avg(NetPositionValue) AS NetPositionValue,
@@ -455,13 +460,16 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            avg(Pnl) AS Pnl,
            avg(Rtn) AS Rtn,
            avg(RtnOfTov) AS RtnOfTov,
+           avg(RtnOfLong) AS RtnOfLong,
            $(with_real ? "" : "--") avg(PnlReal) AS PnlReal,
            avg(OvernightPnl) AS OvernightPnl,
            avg(OvernightRtn) AS OvernightRtn,
            avg(OvernightRtnOfTov) AS OvernightRtnOfTov,
+           avg(OvernightRtnOfLong) AS OvernightRtnOfLong,
            avg(IntradayPnl) AS IntradayPnl,
            avg(IntradayRtn) AS IntradayRtn,
            avg(IntradayRtnOfTov) AS IntradayRtnOfTov,
+           avg(IntradayRtnOfLong) AS IntradayRtnOfLong,
            --avg(BuyOpenTradePnl) AS BuyOpenTradePnl,
            --avg(SellOpenTradePnl) AS SellOpenTradePnl,
            --avg(BuyCloseTradePnl) AS BuyCloseTradePnl,
@@ -508,12 +516,12 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
 
     cols = [:InputHash, :RunningFrom,
         # :OvnPriceFactor, :OvnQtyFactor,
-        :Portfolio, :Capital, :WeightedCapital, :NSymbols, :NLongs, :AvgTotalCapital, :MaxTotalCapital, :TheoModel, :Latency, :TradeWindow, :NTradesPerSignal, :PLF, :QuoteRatio,
+        :Portfolio, :Capital, :WeightedCapital, :NSymbols, :NLongs, :LongCapital, :AvgTotalCapital, :MaxTotalCapital, :TheoModel, :Latency, :TradeWindow, :NTradesPerSignal, :PLF, :QuoteRatio,
         :Offset, :BuyOffset, :SellOffset, :OffsetRange, :SkipFirstMinutes,
         :Skewness, :UnitTradingAmount, :UnitTradingAmountPair, :UnitTradingVolume, :StopCriteria, :BiasFactor,
         :Strategy,
         :PredLabel,
-        :Pnl, :OvernightPnl, :IntradayPnl, :Rtn, :OvernightRtn, :IntradayRtn, :RtnOfTov, :OvernightRtnOfTov, :IntradayRtnOfTov,
+        :Pnl, :OvernightPnl, :IntradayPnl, :Rtn, :OvernightRtn, :IntradayRtn, :RtnOfTov, :OvernightRtnOfTov, :IntradayRtnOfTov, :RtnOfLong, :OvernightRtnOfLong, :IntradayRtnOfLong,
         # :BuyOpenTradePnl, :SellOpenTradePnl, :BuyCloseTradePnl, :SellCloseTradePnl, :BuyForceCloseTradePnl, :SellForceCloseTradePnl,
         :NetPositionValue, :NetPositionValueRatio,
         # :FillRate, :QuotePortion,
@@ -540,12 +548,15 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
 
     comp_avg = comp_avg[!, cols]
 
-    comp_avg[!, :Rtn] .*= 260
-    comp_avg[!, :OvernightRtn] .*= 260
-    comp_avg[!, :IntradayRtn] .*= 260
-    comp_avg[!, :RtnOfTov] .*= 260
-    comp_avg[!, :OvernightRtnOfTov] .*= 260
-    comp_avg[!, :IntradayRtnOfTov] .*= 260
+    comp_avg[!, :Rtn] .*= 250
+    comp_avg[!, :OvernightRtn] .*= 250
+    comp_avg[!, :IntradayRtn] .*= 250
+    comp_avg[!, :RtnOfTov] .*= 250
+    comp_avg[!, :OvernightRtnOfTov] .*= 250
+    comp_avg[!, :IntradayRtnOfTov] .*= 250
+    comp_avg[!, :RtnOfLong] .*= 250
+    comp_avg[!, :OvernightRtnOfLong] .*= 250
+    comp_avg[!, :IntradayRtnOfLong] .*= 250
 
     cols_to_int = [:AvgTotalCapital, :MaxTotalCapital, :NLongs, :Pnl, :NetPositionValue]
     comp_avg[!, cols_to_int] .= Int.(round.(comp_avg[!, cols_to_int]))
@@ -570,27 +581,27 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     # comp_avg[!, :BuyForceCloseTurnoverRatio] = comp_avg.BuyForceCloseTurnover ./ (comp_avg.TotalCapital .* 2);
     # comp_avg[!, :SellForceCloseTurnoverRatio] = comp_avg.SellForceCloseTurnover ./ (comp_avg.TotalCapital .* 2);
     # comp_avg[!, :BuySellTurnoverRatioDiff] = comp_avg.BuyTurnoverRatio .- comp_avg.SellTurnoverRatio;
-    # comp_avg[!, :IntradayInventoryRtn] = (comp_avg.IntradayPnl .- comp_avg.TradePnl) ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :IntradayInventoryRtnOfTov] = (comp_avg.IntradayPnl .- comp_avg.TradePnl) ./ (comp_avg.Turnover) .* 260;
-    # comp_avg[!, :TradeRtnOfTov] = comp_avg.TradePnl ./ (comp_avg.Turnover) .* 260;
-    # comp_avg[!, :TradeRtn] = comp_avg.TradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :TradeRtnOfTov] = comp_avg.TradePnl ./ (comp_avg.Turnover) .* 260;
-    # comp_avg[!, :BuyTradeRtn] = comp_avg.BuyTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :BuyTradeRtnOfTov] = comp_avg.BuyTradePnl ./ (comp_avg.BuyOpenTurnover .+ comp_avg.SellCloseTurnover .+ comp_avg.SellForceCloseTurnover) .* 260;
-    # comp_avg[!, :SellTradeRtn] = comp_avg.SellTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :SellTradeRtnOfTov] = comp_avg.SellTradePnl ./ (comp_avg.SellOpenTurnover .+ comp_avg.BuyCloseTurnover .+ comp_avg.BuyForceCloseTurnover) .* 260;
-    # comp_avg[!, :BuyOpenTradeRtn] = comp_avg.BuyOpenTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :BuyOpenTradeRtnOfTov] = comp_avg.BuyOpenTradePnl ./ (comp_avg.BuyOpenTurnover) .* 260;
-    # comp_avg[!, :SellOpenTradeRtn] = comp_avg.SellOpenTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :SellOpenTradeRtnOfTov] = comp_avg.SellOpenTradePnl ./ (comp_avg.SellOpenTurnover) .* 260;
-    # comp_avg[!, :BuyCloseTradeRtn] = comp_avg.BuyCloseTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :BuyCloseTradeRtnOfTov] = comp_avg.BuyCloseTradePnl ./ (comp_avg.BuyCloseTurnover) .* 260;
-    # comp_avg[!, :SellCloseTradeRtn] = comp_avg.SellCloseTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :SellCloseTradeRtnOfTov] = comp_avg.SellCloseTradePnl ./ (comp_avg.SellCloseTurnover) .* 260;
-    # comp_avg[!, :BuyForceCloseTradeRtn] = comp_avg.BuyForceCloseTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :BuyForceCloseTradeRtnOfTov] = comp_avg.BuyForceCloseTradePnl ./ (comp_avg.BuyForceCloseTurnover) .* 260;
-    # comp_avg[!, :SellForceCloseTradeRtn] = comp_avg.SellForceCloseTradePnl ./ (comp_avg.TotalCapital) .* 260;
-    # comp_avg[!, :SellForceCloseTradeRtnOfTov] = comp_avg.SellForceCloseTradePnl ./ (comp_avg.SellForceCloseTurnover) .* 260;
+    # comp_avg[!, :IntradayInventoryRtn] = (comp_avg.IntradayPnl .- comp_avg.TradePnl) ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :IntradayInventoryRtnOfTov] = (comp_avg.IntradayPnl .- comp_avg.TradePnl) ./ (comp_avg.Turnover) .* 250;
+    # comp_avg[!, :TradeRtnOfTov] = comp_avg.TradePnl ./ (comp_avg.Turnover) .* 250;
+    # comp_avg[!, :TradeRtn] = comp_avg.TradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :TradeRtnOfTov] = comp_avg.TradePnl ./ (comp_avg.Turnover) .* 250;
+    # comp_avg[!, :BuyTradeRtn] = comp_avg.BuyTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :BuyTradeRtnOfTov] = comp_avg.BuyTradePnl ./ (comp_avg.BuyOpenTurnover .+ comp_avg.SellCloseTurnover .+ comp_avg.SellForceCloseTurnover) .* 250;
+    # comp_avg[!, :SellTradeRtn] = comp_avg.SellTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :SellTradeRtnOfTov] = comp_avg.SellTradePnl ./ (comp_avg.SellOpenTurnover .+ comp_avg.BuyCloseTurnover .+ comp_avg.BuyForceCloseTurnover) .* 250;
+    # comp_avg[!, :BuyOpenTradeRtn] = comp_avg.BuyOpenTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :BuyOpenTradeRtnOfTov] = comp_avg.BuyOpenTradePnl ./ (comp_avg.BuyOpenTurnover) .* 250;
+    # comp_avg[!, :SellOpenTradeRtn] = comp_avg.SellOpenTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :SellOpenTradeRtnOfTov] = comp_avg.SellOpenTradePnl ./ (comp_avg.SellOpenTurnover) .* 250;
+    # comp_avg[!, :BuyCloseTradeRtn] = comp_avg.BuyCloseTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :BuyCloseTradeRtnOfTov] = comp_avg.BuyCloseTradePnl ./ (comp_avg.BuyCloseTurnover) .* 250;
+    # comp_avg[!, :SellCloseTradeRtn] = comp_avg.SellCloseTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :SellCloseTradeRtnOfTov] = comp_avg.SellCloseTradePnl ./ (comp_avg.SellCloseTurnover) .* 250;
+    # comp_avg[!, :BuyForceCloseTradeRtn] = comp_avg.BuyForceCloseTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :BuyForceCloseTradeRtnOfTov] = comp_avg.BuyForceCloseTradePnl ./ (comp_avg.BuyForceCloseTurnover) .* 250;
+    # comp_avg[!, :SellForceCloseTradeRtn] = comp_avg.SellForceCloseTradePnl ./ (comp_avg.TotalCapital) .* 250;
+    # comp_avg[!, :SellForceCloseTradeRtnOfTov] = comp_avg.SellForceCloseTradePnl ./ (comp_avg.SellForceCloseTurnover) .* 250;
 
     # comp_date[!, :TradePnl] = comp_date.BuyOpenTradePnl .+ comp_date.SellOpenTradePnl .+ comp_date.BuyCloseTradePnl .+ comp_date.SellCloseTradePnl .+ comp_date.BuyForceCloseTradePnl .+ comp_date.SellForceCloseTradePnl;
     # if with_close
