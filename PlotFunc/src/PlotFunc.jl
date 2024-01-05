@@ -1,7 +1,7 @@
 module PlotFunc
 export palette, plot_group, plot_curves, plot_table, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_md, to_file, get_x_domain, get_y_domain, combine_plots
 
-using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors
+using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors, PyCall
 using CommonUtils, DfUtils, DbUtils
 include("../../constants.jl")
 
@@ -293,9 +293,9 @@ function plot_pnl(grpby, title="", real_static::Bool=false, real_open::Bool=fals
     return p
 end
 
-function get_bt_trades(conn, symbol, date, ih)
+function get_bt_trades(conn, date, symbol, ih)
     if ih === nothing
-        return get_bt_trades(symbol, date)
+        return get_bt_trades(date, symbol)
     end
 
     query = """
@@ -321,10 +321,10 @@ function get_bt_trades(conn, start_date::Date, end_date::Date, ih::String)
     return ret
 end
 
-function plot_trades(conn, symbol, date, ih)
+function plot_trades(conn, date, symbol, ih)
     dt = CommonUtils.format_dt(date)
-    md = DbUtils.get_md(symbol, dt)
-    relayout(PlotFunc.plot_trades(PlotFunc.get_bt_trades(conn, symbol, dt, ih), md), title_text="$symbol@$dt")
+    md = DbUtils.get_md(dt, symbol)
+    relayout(plot_trades(get_bt_trades(conn, dt, symbol, ih), md), title_text="$symbol@$dt")
 end
 
 function plot_trades(trades, ob; timerange=nothing, title="")
@@ -352,8 +352,8 @@ function plot_trades(trades, ob; timerange=nothing, title="")
     return _plot_trades(_trades, p)
 end
 
-function plot_bt_trades(conn, symbol, date, timerange=nothing; ih=nothing)
-    plot_trades(get_bt_trades(conn, symbol, date, ih), get_md(symbol, date), timerange=timerange, title="bt trades $symbol on $date")
+function plot_bt_trades(conn, date, symbol, timerange=nothing; ih=nothing)
+    plot_trades(get_bt_trades(conn, date, symbol, ih), get_md(date, symbol), timerange=timerange, title="bt trades $symbol on $date")
 end
 
 function _plot_trades(trades, p; y=:Price, buycolor=:seagreen, sellcolor=:indianred, minn=-1, maxx=-1, buylabel="buy", selllabel="sell")
@@ -401,11 +401,29 @@ end
 
 function plot_md(date, symbol)
     plot([
-            scatter(DbUtils.get_md(symbol, date), x=:ExTime, y=:BidPrice1, name="bid price",line=attr(color=:seagreen, width=1)),
-            scatter(DbUtils.get_md(symbol, date), x=:ExTime, y=:AskPrice1, name="ask price",line=attr(color=:indianred, width=1))
+            scatter(DbUtils.get_md(date, symbol), x=:ExTime, y=:BidPrice1, name="bid price", line=attr(color=:seagreen, width=1)),
+            scatter(DbUtils.get_md(date, symbol), x=:ExTime, y=:AskPrice1, name="ask price", line=attr(color=:indianred, width=1))
         ],
         Layout(template=plot_template, title_text="$symbol@$(CommonUtils.format_dt(date))")
     )
+end
+
+function convert_html_to_svg(fn)
+    str = match(r"Plotly\.newPlot\((.*?)\)", replace(read(fn, String), "\n" => "")).captures[1]
+    str = strip(join(split(str, ",")[2:end], ","))[1:end-1]
+
+    py"""
+    import re, json
+    def func(json_str, _fn):
+        import plotly, json
+        call_args = json.loads(f'[{json_str}]')
+        plotly_json = {'data': call_args[0], 'layout': call_args[1]}
+        p = plotly.io.from_json(json.dumps(plotly_json))
+        p.write_image(f'{_fn[:-5]}.svg')
+    """
+
+    py"func"(str, fn)
+    rm(fn)
 end
 
 function to_file(_p, fn, dir="/home/qdu/store/bt_results/")
@@ -414,7 +432,13 @@ function to_file(_p, fn, dir="/home/qdu/store/bt_results/")
 
     path = dir * fn
     mkpath(dirname(path))
-    savefig(_p, path; width=w, height=h)
+    if (endswith(fn, ".svg"))
+        path = replace(path, ".svg" => ".html")
+        savefig(_p, path; width=w, height=h)
+        convert_html_to_svg(path)
+    else
+        savefig(_p, path; width=w, height=h)
+    end
 end
 
 function get_x_domain(i, n, space)
