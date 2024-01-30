@@ -13,7 +13,6 @@ global mini_cfg = nothing
 
 function __init__()
     global ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
-    global _conn = connect_ch()
     _minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
     global minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
 
@@ -34,7 +33,7 @@ end
 
 function conn()
     global _conn
-    if is_connected(_conn)
+    if _conn !== nothing && is_connected(_conn)
         return _conn
     else
         return reconnect()

@@ -1,6 +1,6 @@
 name = "Metrics"
 uuid = "6485c6d1-3b7d-4fed-aa49-5041db85880e"
-authors = ["qdu <q.du@connect.ust.hk>"]
+authors = ["qdu <qdduuu@gmail.com>"]
 version = "0.1.0"
 
 [deps]

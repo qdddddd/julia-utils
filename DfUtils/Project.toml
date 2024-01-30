@@ -1,6 +1,6 @@
 name = "DfUtils"
 uuid = "38c3f4fe-3d7d-4abc-beac-81693fc95778"
-authors = ["qdu <q.du@connect.ust.hk>"]
+authors = ["qdu <qdduuu@gmail.com>"]
 version = "0.1.0"
 
 [deps]

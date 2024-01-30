@@ -1,6 +1,6 @@
 name = "PlotFunc"
 uuid = "f5a45be5-af28-47ef-aaff-5ed87fb4f34c"
-authors = ["qdu <q.du@connect.ust.hk>"]
+authors = ["qdu <qdduuu@gmail.com>"]
 version = "0.1.0"
 
 [deps]

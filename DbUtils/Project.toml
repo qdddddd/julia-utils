@@ -1,6 +1,6 @@
 name = "DbUtils"
 uuid = "ac259bcb-f7be-48fd-a9e7-b5e0283ab065"
-authors = ["qdu <q.du@connect.ust.hk>"]
+authors = ["qdu <qdduuu@gmail.com>"]
 version = "0.1.0"
 
 [deps]

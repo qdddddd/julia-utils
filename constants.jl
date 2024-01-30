@@ -18,7 +18,8 @@ index_codes = Dict(
     "IH" => "000016.SH",
     "IF" => "000300.SH",
     "IC" => "000905.SH",
-    "IM" => "000852.SH"
+    "IM" => "000852.SH",
+    "All" => "All",
 );
 
 using Dates

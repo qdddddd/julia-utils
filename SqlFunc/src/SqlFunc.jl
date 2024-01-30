@@ -22,7 +22,37 @@ function get_st(date)
     """)
 end
 
-function get_index_members(conn, date, index; include_st=false, skip_stop=false)
+function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
+    st_query = """
+        $(skip_st ? "" : """
+            AND Code NOT IN (
+                SELECT DISTINCT toString(S_INFO_WINDCODE)
+                FROM winddb_mirror.asharest FINAL
+                WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+            )
+        """)
+    """
+
+    stop_query = """
+        $(skip_stop ? """
+            AND Code NOT IN (
+                SELECT DISTINCT toString(S_INFO_WINDCODE)
+                FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
+            )
+        """ : "")
+    """
+
+    if index == "All"
+        return select_df(conn, """
+            WITH '$(format_dt(date))' AS dt
+            SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_mirror.ashareeodprices FINAL
+            WHERE TRADE_DT = dt
+                $(st_query)
+                $(stop_query)
+        """)
+    end
+
     index_code = index_codes[index]
     if endswith(index_code, "WI")
         table = "winddb_mirror.aindexmemberswind FINAL"
@@ -38,20 +68,8 @@ function get_index_members(conn, date, index; include_st=false, skip_stop=false)
         WHERE $(index_col) = '$(index_code)'
             AND (S_CON_OUTDATE > dt OR S_CON_OUTDATE is NULL)
             AND S_CON_INDATE <= dt
-            $(include_st ? "" : """
-                AND Code NOT IN (
-                    SELECT DISTINCT toString(S_INFO_WINDCODE)
-                    FROM winddb_mirror.asharest FINAL
-                    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-                )
-            """)
-            $(skip_stop ? """
-                AND Code NOT IN (
-                    SELECT DISTINCT toString(S_INFO_WINDCODE)
-                    FROM winddb_mirror.ashareeodprices FINAL
-                    WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
-                )
-            """ : "")
+            $(st_query)
+            $(stop_query)
     """)
 end
 
@@ -61,7 +79,7 @@ function get_apr_info(date, codes, c=nothing)
     end
     select_df(c, """
         WITH '$(CommonUtils.format_dt(date))' AS dt
-            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue,
+            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue, TradeStatus
                    (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
             FROM (
                 SELECT * FROM (
@@ -72,7 +90,8 @@ function get_apr_info(date, codes, c=nothing)
                            toDecimal64(S_DQ_PRECLOSE, 4)      PreClosePrice,
                            toDecimal64(S_DQ_ADJFACTOR, 6)     AdjFactorRolling,
                            toDecimal64(S_DQ_AMOUNT, 4) * 1000 Amount,
-                           toInt64(S_DQ_VOLUME * 100)         Volume
+                           toInt64(S_DQ_VOLUME * 100)         Volume,
+                           S_DQ_TRADESTATUS                   TradeStatus
                     FROM winddb_mirror.ashareeodprices FINAL
                     WHERE TRADE_DT = dt) AS TmpEodP
                 JOIN (
@@ -308,7 +327,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                    IntradayPnl / Turnover IntradayRtnOfTov,
                    Turnover / TotalCapital TurnoverRatio,
                    NetPositionValue / TotalCapital NetPositionValueRatio,
-                   NLongs * if(Capital != 0, Capital*1e8/NSymbols, WeightedCapital*1e4) LongCapital,
+                   NLongs * if(Capital != 0, Capital*1e8/NSymbols, WeightedCapital*1e4) + FeeAdj LongCapital,
                    Pnl / LongCapital RtnOfLong,
                    OvernightPnl / LongCapital OvernightRtnOfLong,
                    IntradayPnl / LongCapital IntradayRtnOfLong
@@ -317,14 +336,16 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        $(bin ? "" : "--") Bin,
                        $(tov_bin ? "" : "--") TovBin,
                        sum((Inventory+Position) * EodPrice) AS NetPositionValue,
-                       sum(Pnl) AS Pnl,
+                       sum(ET.Pnl + ET.Fee - ET.FeeAdj) AS Pnl,
                        sum(OvernightPnl) AS OvernightPnl,
                        sum(IntradayPnl) AS IntradayPnl,
                        sum(Turnover) AS Turnover,
-                       sum(Fee) AS Fee,
+                       sum(ET.Fee) AS Fee,
+                       sum(ET.FeeAdj) AS FeeAdj,
                        countIf(Inventory + Position > 0) AS NLongs
                 FROM (
-                    SELECT *
+                    SELECT *,
+                           Fee / 6.5e-4 * 1e-3 FeeAdj
                            $(property !== nothing ? ", Bin" : "")
                            $(tov !== nothing ? ", TovBin" : "")
                     FROM (
@@ -351,7 +372,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                         ON ET.Symbol = PT.Symbol AND ET.Date = PT.Date
                         WHERE TovBin != 0
                     """ : "")
-                )
+                ) AS ET
                 GROUP BY Date, InputHash $(bin ? ", Bin" : "") $(tov_bin ? ", TovBin" : "")
             ) AS ET
             INNER JOIN (

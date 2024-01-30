@@ -1,6 +1,6 @@
 name = "SqlFunc"
 uuid = "9d28e109-c923-48cb-96da-18dc45ec1574"
-authors = ["qdu <q.du@connect.ust.hk>"]
+authors = ["qdu <qdduuu@gmail.com>"]
 version = "0.1.0"
 
 [deps]
