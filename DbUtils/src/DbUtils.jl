@@ -55,8 +55,17 @@ end
 
 function get_md(date, symbol, nan=true)
     dt = format_dt(date)
-    postfix = dt < "20230223" ? "" : "-lc"
-    bucket = (endswith(symbol, "SZ") ? "sze" : "sse") * postfix
+    bucket = ""
+    postfix = ""
+    if endswith(symbol, "SZ")
+        bucket = "sze"
+        postfix = dt < "20160510" ? "" : "-lc"
+    else
+        bucket = "sse"
+        postfix = dt < "20211020" ? "" : "-lc"
+    end
+
+    bucket *= postfix
     fn = "$(dt)/$(symbol)_$(dt).gz"
 
     if !mc_isfile("$(bucket)/$(fn)") return nothing end
@@ -64,7 +73,7 @@ function get_md(date, symbol, nan=true)
     global minio_cfg
     df = CSV.File(s3_get(minio_cfg, bucket, fn);
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
-        types=Dict(:BidPrice1 => Float64, :AskPrice1 => Float64, :ExTime => DateTime),
+        types=Dict(:BidPrice1 => Float32, :AskPrice1 => Float32, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",
         ntasks=1
     ) |> DataFrame
@@ -98,9 +107,19 @@ end
 _date_fmt = dateformat"yyyy-mm-dd HH:MM:SS.s"
 
 function get_od(date, symbol)
+    bucket = ""
+    postfix = ""
+    if endswith(symbol, "SZ")
+        bucket = "szeorder"
+        postfix = dt < "20160510" ? "" : "-lc"
+    else
+        bucket = "sseorder"
+        postfix = dt < "20211020" ? "" : "-lc"
+    end
+
+    bucket *= postfix
+
     global minio_cfg
-    postfix = date < "20230223" ? "" : "-lc"
-    bucket = (endswith(symbol, "SZ") ? "szeorder" : "sseorder") * postfix
     df = CSV.File(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz")) |> DataFrame
 
     if endswith(symbol, "SZ")
@@ -123,14 +142,19 @@ function get_od(date, symbol)
 end
 
 function get_td(date, symbol)
+    bucket = ""
     postfix = ""
-
-    if date > "20230223"
-        postfix = "-lc"
+    if endswith(symbol, "SZ")
+        bucket = "szetrade"
+        postfix = dt < "20160510" ? "" : "-lc"
+    else
+        bucket = "ssetrade"
+        postfix = dt < "20211020" ? "" : "-lc"
     end
 
+    bucket *= postfix
+
     global minio_cfg
-    bucket = (endswith(symbol, "SZ") ? "szetrade" : "ssetrade") * postfix
     df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
 
     if hasproperty(df, :Timestamp)
@@ -259,7 +283,7 @@ function get_future_md(date, symbol, nan=true)
     df = CSV.read(
         s3_get(minio_cfg, bucket, fn), DataFrame;
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
-        types=Dict(:BidPrice1 => Float64, :AskPrice1 => Float64, :ExTime => DateTime),
+        types=Dict(:BidPrice1 => Float32, :AskPrice1 => Float32, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",
         ntasks=1
     )

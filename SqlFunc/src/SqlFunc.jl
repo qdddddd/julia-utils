@@ -1,5 +1,5 @@
 module SqlFunc
-export get_st, get_index_members, get_apr_info, get_apr_simple_ver, get_table, get_input_hash, agg_results, get_prices, get_trade_rtn
+export get_st, get_index_members, get_apr_info, get_apr_simple_ver, get_table, get_input_hash, agg_results, get_prices, get_trade_rtn, get_stop_tradings
 
 using DataFrames, StatsBase, DataFramesMeta, ClickHouse
 using DfUtils, DbUtils, CommonUtils
@@ -20,6 +20,15 @@ function get_st(date)
         SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
         WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
     """)
+end
+
+function get_stop_tradings(date)
+    select_df(conn(), """
+        WITH '$(format_dt(date))' as dt
+        SELECT DISTINCT toString(S_INFO_WINDCODE) Code
+        FROM winddb_mirror.ashareeodprices FINAL
+        WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
+    """).Code
 end
 
 function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
@@ -79,7 +88,7 @@ function get_apr_info(date, codes, c=nothing)
     end
     select_df(c, """
         WITH '$(CommonUtils.format_dt(date))' AS dt
-            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue, TradeStatus
+            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue, TradeStatus,
                    (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
             FROM (
                 SELECT * FROM (
@@ -319,6 +328,9 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     SELECT * FROM (
         SELECT * FROM (
             SELECT *,
+                   StaticPnl / TotalCapital StaticRtn,
+                   StaticOvernightPnl / TotalCapital StaticOvernightRtn,
+                   StaticIntradayPnl / TotalCapital StaticIntradayRtn,
                    Pnl / TotalCapital Rtn,
                    OvernightPnl / TotalCapital OvernightRtn,
                    IntradayPnl / TotalCapital IntradayRtn,
@@ -327,51 +339,66 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                    IntradayPnl / Turnover IntradayRtnOfTov,
                    Turnover / TotalCapital TurnoverRatio,
                    NetPositionValue / TotalCapital NetPositionValueRatio,
-                   NLongs * if(Capital != 0, Capital*1e8/NSymbols, WeightedCapital*1e4) + FeeAdj LongCapital,
+                   NLongs * if(Capital != 0, Capital*1e8/NSymbols, WeightedCapital*1e4) + Fee LongCapital,
                    Pnl / LongCapital RtnOfLong,
                    OvernightPnl / LongCapital OvernightRtnOfLong,
-                   IntradayPnl / LongCapital IntradayRtnOfLong
+                   IntradayPnl / LongCapital IntradayRtnOfLong,
+                   StaticRtn + Rtn TotalRtn,
+                   StaticOvernightRtn + OvernightRtn TotalOvernightRtn,
+                   StaticIntradayRtn + IntradayRtn TotalIntradayRtn
             FROM (
                 SELECT InputHash, Date,
                        $(bin ? "" : "--") Bin,
                        $(tov_bin ? "" : "--") TovBin,
                        sum((Inventory+Position) * EodPrice) AS NetPositionValue,
-                       sum(ET.Pnl + ET.Fee - ET.FeeAdj) AS Pnl,
+                       sum(StaticPnl) AS StaticPnl,
+                       sum(StaticOvernightPnl) AS StaticOvernightPnl,
+                       sum(StaticIntradayPnl) AS StaticIntradayPnl,
+                       sum(ET.Pnl) AS Pnl,
                        sum(OvernightPnl) AS OvernightPnl,
                        sum(IntradayPnl) AS IntradayPnl,
                        sum(Turnover) AS Turnover,
                        sum(ET.Fee) AS Fee,
-                       sum(ET.FeeAdj) AS FeeAdj,
                        countIf(Inventory + Position > 0) AS NLongs
                 FROM (
-                    SELECT *,
-                           Fee / 6.5e-4 * 1e-3 FeeAdj
-                           $(property !== nothing ? ", Bin" : "")
-                           $(tov !== nothing ? ", TovBin" : "")
-                    FROM (
+                    SELECT * FROM (
                         SELECT *,
-                               ET.Inventory * (EodPrice - OpenPrice) IntradayInventoryPnl,
-                               if(PrevDayIn, ET.OvernightPnl, 0) OvernightPnl,
-                               if(PrevDayIn AND TodayIn, ET.Inventory, 0) Inventory,
-                               if(TodayIn, ET.Position, 0) Position,
-                               if(TodayIn, if(PrevDayIn, ET.IntradayPnl, ET.IntradayPnl - IntradayInventoryPnl), 0) IntradayPnl,
-                               if(TodayIn, ET.Turnover, 0) Turnover,
-                               if(TodayIn, ET.Fee, 0) Fee,
-                               if(TodayIn, if(PrevDayIn, ET.Pnl, ET.Pnl - IntradayInventoryPnl - ET.OvernightPnl), ET.OvernightPnl) Pnl
-                        FROM $(eod_tb) AS ET
-                        INNER JOIN POOL
-                        ON ET.Symbol = POOL.Symbol AND ET.Date = POOL.Date
-                        WHERE InputHash IN ids AND Date IN dates $(exchange_cond) $(subset_cond)
+                               $(property !== nothing ? ", Bin" : "")
+                               $(tov !== nothing ? ", TovBin" : "")
+                        FROM (
+                            SELECT *,
+                                   ET.Inventory * (EodPrice - OpenPrice) IntradayInventoryPnl,
+                                   if(PrevDayIn, ET.OvernightPnl, 0) OvernightPnl,
+                                   if(PrevDayIn AND TodayIn, ET.Inventory, 0) Inventory,
+                                   if(TodayIn, ET.Position, 0) Position,
+                                   if(TodayIn, if(PrevDayIn, ET.IntradayPnl, ET.IntradayPnl - IntradayInventoryPnl), 0) IntradayPnl,
+                                   if(TodayIn, ET.Turnover, 0) Turnover,
+                                   if(TodayIn, ET.Fee, 0) Fee,
+                                   if(TodayIn, if(PrevDayIn, ET.Pnl, ET.Pnl - IntradayInventoryPnl - ET.OvernightPnl), ET.OvernightPnl) Pnl
+                            FROM $(eod_tb) AS ET
+                            INNER JOIN POOL
+                            ON ET.Symbol = POOL.Symbol AND ET.Date = POOL.Date
+                            WHERE InputHash IN ids AND Date IN dates $(exchange_cond) $(subset_cond)
+                        ) AS ET
+                        $(to_classify !== nothing ? """
+                            LEFT JOIN (SELECT Symbol, Bin FROM Bins) AS PT
+                            ON ET.Symbol = PT.Symbol
+                        """ : "")
+                        $(tov !== nothing ? """
+                            LEFT JOIN (SELECT Date, Symbol, OpenPortion, TovBin FROM OpenPortions) AS PT
+                            ON ET.Symbol = PT.Symbol AND ET.Date = PT.Date
+                            WHERE TovBin != 0
+                        """ : "")
                     ) AS ET
-                    $(to_classify !== nothing ? """
-                        LEFT JOIN (SELECT Symbol, Bin FROM Bins) AS PT
-                        ON ET.Symbol = PT.Symbol
-                    """ : "")
-                    $(tov !== nothing ? """
-                        LEFT JOIN (SELECT Date, Symbol, OpenPortion, TovBin FROM OpenPortions) AS PT
-                        ON ET.Symbol = PT.Symbol AND ET.Date = PT.Date
-                        WHERE TovBin != 0
-                    """ : "")
+                    LEFT JOIN (
+                        SELECT Date, Symbol, Id,
+                               StaticPosition * (OpenPrice - PreClose) AS StaticOvernightPnl,
+                               StaticPosition * (Price - OpenPrice) AS StaticIntradayPnl,
+                               StaticPosition * (Price - PreClose) AS StaticPnl
+                        FROM $(input_tb)
+                        WHERE Id IN ids AND Date IN dates $(exchange_cond) $(subset_cond)
+                    ) AS IT
+                    ON ET.Symbol = IT.Symbol AND ET.Date = IT.Date AND ET.InputHash = IT.Id
                 ) AS ET
                 GROUP BY Date, InputHash $(bin ? ", Bin" : "") $(tov_bin ? ", TovBin" : "")
             ) AS ET
@@ -478,11 +505,18 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
            avg(NetPositionValue) AS NetPositionValue,
            avg(NetPositionValueRatio) AS NetPositionValueRatio,
            $(with_real ? "" : "--") avg(NetPositionValueReal) AS NetPositionValueReal,
+           avg(StaticPnl) AS StaticPnl,
+           avg(StaticRtn) AS StaticRtn,
+           avg(TotalRtn) AS TotalRtn,
            avg(Pnl) AS Pnl,
            avg(Rtn) AS Rtn,
            avg(RtnOfTov) AS RtnOfTov,
            avg(RtnOfLong) AS RtnOfLong,
            $(with_real ? "" : "--") avg(PnlReal) AS PnlReal,
+           avg(TotalOvernightRtn) AS TotalOvernightRtn,
+           avg(TotalIntradayRtn) AS TotalIntradayRtn,
+           avg(StaticOvernightRtn) AS StaticOvernightRtn,
+           avg(StaticIntradayRtn) AS StaticIntradayRtn,
            avg(OvernightPnl) AS OvernightPnl,
            avg(OvernightRtn) AS OvernightRtn,
            avg(OvernightRtnOfTov) AS OvernightRtnOfTov,
@@ -543,6 +577,8 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         :Strategy,
         :PredLabel,
         :Pnl, :OvernightPnl, :IntradayPnl, :Rtn, :OvernightRtn, :IntradayRtn, :RtnOfTov, :OvernightRtnOfTov, :IntradayRtnOfTov, :RtnOfLong, :OvernightRtnOfLong, :IntradayRtnOfLong,
+        :StaticPnl, :StaticRtn, :StaticOvernightRtn, :StaticIntradayRtn,
+        :TotalRtn, :TotalOvernightRtn, :TotalIntradayRtn,
         # :BuyOpenTradePnl, :SellOpenTradePnl, :BuyCloseTradePnl, :SellCloseTradePnl, :BuyForceCloseTradePnl, :SellForceCloseTradePnl,
         :NetPositionValue, :NetPositionValueRatio,
         # :FillRate, :QuotePortion,

@@ -1,6 +1,6 @@
 module CommonUtils
 using Base: AbstractVecOrTuple
-export to_datetime, sample, count_values, squeeze, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile
+export to_datetime, sample, count_values, squeeze, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile, to_milli
 
 using Dates, StatsBase, Statistics
 
@@ -84,5 +84,19 @@ product(x::AbstractArray, y::AbstractArray) = vec(Iterators.product(x, y) |> col
 
 get_fee_rate(date::String) = date < "20230828" ? 0.00065 : 0.00035
 get_fee_rate(date::Date) = date < Date(2023, 8, 28) ? 0.00065 : 0.00035
+
+function to_milli(str)
+    if str[end] == 's'
+        return parse(Int, str[1:end-1]) * 1000
+    elseif str[end] == 'm'
+        return parse(Int, str[1:end-1]) * 60 * 1000
+    elseif str[end] == 'h'
+        return parse(Int, str[1:end-1]) * 3600 * 1000
+    elseif str[end] == 'd'
+        return parse(Int, str[1:end-1]) * 24 * 3600 * 1000
+    else
+        return parse(Int, str)
+    end
+end
 
 end

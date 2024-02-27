@@ -240,7 +240,7 @@ end
 function plot_table(
     df;
     header_names=nothing, title=nothing, width=1000, height=300, fill_color=nothing, cell_align=["left", "right"],
-    column_widths=nothing
+    column_widths=nothing, font_size=12
 )
     header_names = header_names === nothing ? names(df) : header_names
 
@@ -262,14 +262,14 @@ function plot_table(
                 values=["<b>$name</b>" for name in header_names],
                 fill_color=:white,
                 line_color=default_grid_color,
-                font=attr(size=13),
+                font=attr(size=font_size),
                 align="center"
             ),
             cells=attr(
                 values=[CommonUtils.format_number.(df[!, c]) for c in names(df)],
                 line_color=default_grid_color,
                 fill_color=fill_color,
-                font=attr(size=13),
+                font=attr(size=font_size),
                 align=cell_align,
                 height=25
             ),
