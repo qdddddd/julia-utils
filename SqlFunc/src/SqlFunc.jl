@@ -2,11 +2,12 @@ module SqlFunc
 export get_st, get_index_members, get_apr_info, get_apr_simple_ver, get_table, get_input_hash, agg_results, get_prices, get_trade_rtn, get_stop_tradings
 
 using DataFrames, StatsBase, DataFramesMeta, ClickHouse
+using Base: AbstractVecOrTuple
 using DfUtils, DbUtils, CommonUtils
 include("../../constants.jl")
 
 function get_st(date, symbol)
-    select_df(conn(), """
+    ClickHouse.select_df(conn(), """
         WITH '$(format_dt(date))' as dt
         SELECT * FROM winddb_mirror.asharest FINAL
         WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
@@ -15,7 +16,7 @@ function get_st(date, symbol)
 end
 
 function get_st(date)
-    select_df(conn(), """
+    ClickHouse.select_df(conn(), """
         WITH '$(format_dt(date))' as dt
         SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
         WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
@@ -23,7 +24,7 @@ function get_st(date)
 end
 
 function get_stop_tradings(date)
-    select_df(conn(), """
+    ClickHouse.select_df(conn(), """
         WITH '$(format_dt(date))' as dt
         SELECT DISTINCT toString(S_INFO_WINDCODE) Code
         FROM winddb_mirror.ashareeodprices FINAL
@@ -31,7 +32,7 @@ function get_stop_tradings(date)
     """).Code
 end
 
-function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
+function get_index_members(conn, date, index::AbstractString; skip_st=false, skip_stop=false)
     st_query = """
         $(skip_st ? "" : """
             AND Code NOT IN (
@@ -53,7 +54,7 @@ function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
     """
 
     if index == "All"
-        return select_df(conn, """
+        return ClickHouse.select_df(conn, """
             WITH '$(format_dt(date))' AS dt
             SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_mirror.ashareeodprices FINAL
             WHERE TRADE_DT = dt
@@ -71,7 +72,7 @@ function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
         index_col = "S_INFO_WINDCODE"
     end
 
-    select_df(conn, """
+    ClickHouse.select_df(conn, """
         WITH '$(format_dt(date))' AS dt
         SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM $(table)
         WHERE $(index_col) = '$(index_code)'
@@ -82,11 +83,58 @@ function get_index_members(conn, date, index; skip_st=false, skip_stop=false)
     """)
 end
 
+function get_index_members(conn, date, indexes::AbstractVecOrTuple; skip_st=false, skip_stop=false)
+    dt = format_dt(date)
+    st_query = """
+        $(skip_st ? "" : """
+            AND Code NOT IN (
+                SELECT DISTINCT toString(S_INFO_WINDCODE)
+                FROM winddb_mirror.asharest FINAL
+                WHERE ENTRY_DT <= '$(dt)' AND (REMOVE_DT > '$(dt)' OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+            )
+        """)
+    """
+
+    stop_query = """
+        $(skip_stop ? """
+            AND Code NOT IN (
+                SELECT DISTINCT toString(S_INFO_WINDCODE)
+                FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT = '$(dt)' AND S_DQ_TRADESTATUSCODE = '0'
+            )
+        """ : "")
+    """
+
+    wi_indexes_query = join_str([index_codes[x] for x in indexes[endswith.(indexes, "WI")]])
+    other_indexes_query = join_str([index_codes[x] for x in indexes[.!endswith.(indexes, "WI")]])
+
+    ClickHouse.select_df(conn, """
+        SELECT * FROM (
+            SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmembers FINAL
+            WHERE S_INFO_WINDCODE IN ($(other_indexes_query))
+                AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
+                AND S_CON_INDATE <= '$(dt)'
+                $(st_query)
+                $(stop_query)
+
+            UNION ALL
+
+            SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmemberswind FINAL
+            WHERE F_INFO_WINDCODE IN ($(wi_indexes_query))
+                AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
+                AND S_CON_INDATE <= '$(dt)'
+                $(st_query)
+                $(stop_query)
+        )
+        ORDER BY Code
+    """)
+end
+
 function get_apr_info(date, codes, c=nothing)
     if c === nothing
         c = conn()
     end
-    select_df(c, """
+    ClickHouse.select_df(c, """
         WITH '$(CommonUtils.format_dt(date))' AS dt
             SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue, TradeStatus,
                    (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
@@ -124,7 +172,7 @@ function get_apr_info(date, codes, c=nothing)
 end
 
 function get_apr_simple_ver(date, rolling_window, codes)
-    select_df(conn(), """
+    ClickHouse.select_df(conn(), """
         WITH '$(CommonUtils.format_dt(date))' AS dt,
             $(rolling_window) AS rw,
             dates AS (
@@ -192,7 +240,7 @@ function get_table(conn, program_id, name; ih_col_name="InputHash", cond="")
             WHERE RunningFrom LIKE '$(program_id)' $(cond)
         )
     """
-    return select_df(conn, query)
+    return ClickHouse.select_df(conn, query)
 end
 
 function get_input_hash(conn, program_id; cond=nothing)
@@ -202,14 +250,14 @@ function get_input_hash(conn, program_id; cond=nothing)
         query *= " AND ($cond)"
     end
 
-    res = select_df(conn, query)
+    res = ClickHouse.select_df(conn, query)
     return nrow(res) == 0 ? String[] : res[:, :Id]
 end
 
 function get_prices(conn, dates, ids; exchange=nothing)
     exchange_condition = exchange !== nothing ? "AND endsWith(Symbol, '$(exchange)')" : ""
 
-    prices = select_df(conn, """
+    prices = ClickHouse.select_df(conn, """
         SELECT DISTINCT Symbol, Date, toFloat32(PreClose) PreClose, toFloat32(OpenPrice) OpenPrice, toFloat32(Price) EodPrice
         FROM $(input_tb)
         WHERE Id IN ($(join_str(ids))) AND Date IN ($(join_str(dates))) $(exchange_condition)
@@ -555,14 +603,14 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     ORDER BY Capital, Offset
     """
 
-    comp_date = select_df(conn, query_by_dt)
+    comp_date = ClickHouse.select_df(conn, query_by_dt)
     if nrow(comp_date) == 0
         return nothing
     end
 
     sort!(comp_date, :Date)
 
-    comp_avg = select_df(conn, query)
+    comp_avg = ClickHouse.select_df(conn, query)
 
     if parse_theo
         comp_avg[!, :TheoModel] = [x[2][1:end-1] for x in split.(comp_avg.TheoModel, "_")]
@@ -713,7 +761,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
 end
 
 function get_trade_rtn(conn, date, ih, capital)
-    select_df(
+    ClickHouse.select_df(
         conn,
         """
     SELECT InputHash, toDate(Timestamp) Date, Symbol,
@@ -750,7 +798,7 @@ function get_trade_rtn(conn, date, ih, capital)
 end
 
 function get_trade_rtn(conn, ih, capital)
-    select_df(
+    ClickHouse.select_df(
         conn,
         """
     SELECT InputHash, toDate(Timestamp) Date, Symbol,

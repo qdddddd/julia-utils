@@ -35,8 +35,6 @@ if readline()[1] == 'y'
     end
 end
 
-Pkg.activate()
-
 run(`pip3 install pymssql`)
 
 for name in readdir(@__DIR__)
@@ -45,6 +43,9 @@ for name in readdir(@__DIR__)
     end
     dir = joinpath(@__DIR__, name)
     if isdir(dir) && !startswith(name, ".")
+        Pkg.activate(name)
+        Pkg.update()
+        Pkg.activate()
         Pkg.develop(path=dir)
     end
 end

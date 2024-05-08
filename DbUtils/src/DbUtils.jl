@@ -1,6 +1,6 @@
 module DbUtils
 
-export connect_ch, reconnect, conn, execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql
+export connect_ch, reconnect, conn, execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, select_df, ClickHouseClient
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
 using CommonUtils: format_dt, to_datetime
@@ -52,6 +52,43 @@ function execute_queries(queries, to_throw=false)
         end
     end
 end
+
+# ===========================================================
+
+mutable struct ClickHouseClient
+    pool::Vector{ClickHouseSock}
+    lks::Vector{ReentrantLock}
+    max_connections::Int
+    id::Int
+
+    ClickHouseClient(max_connections::Int = 10) = new(
+        [connect_ch() for _ in 1:max_connections], [ReentrantLock() for _ in 1:(max_connections+1)], max_connections, 0
+    )
+end
+
+function get_conn!(client::ClickHouseClient)
+    i = lock(client.lks[end]) do
+        client.id = client.id % client.max_connections + 1
+        client.id
+    end
+
+    lock(client.lks[i]) do
+        if !is_connected(client.pool[i])
+            client.pool[i] = connect_ch()
+        end
+    end
+
+    return client.pool[i], client.lks[i]
+end
+
+function select_df(client::ClickHouseClient, query::String)
+    c, lk = get_conn!(client)
+    lock(lk) do
+        ClickHouse.select_df(c, query)
+    end
+end
+
+# ===========================================================
 
 function get_md(date, symbol, nan=true)
     dt = format_dt(date)
@@ -255,9 +292,27 @@ function get_next_trading_day_if_holiday(date::Date)
     end
 end
 
+get_next_trading_day_if_holiday(date::AbstractString) = get_next_trading_day_if_holiday(Dates.Date(date, "yyyymmdd"))
+
 function get_next_trading_day(date::Date)
     return get_next_trading_day_if_holiday(date + Day(1))
 end
+
+get_next_trading_day(date::AbstractString) = get_next_trading_day(Dates.Date(date, "yyyymmdd"))
+
+function get_prev_trading_day_if_holiday(date::Date)
+    day_of_week = dayofweek(date)
+
+    if day_of_week == Saturday
+        return get_prev_trading_day_if_holiday(date - Day(1))
+    elseif day_of_week == Sunday
+        return get_prev_trading_day_if_holiday(date - Day(2))
+    else
+        return is_holiday(date) ? get_prev_trading_day_if_holiday(date - Day(1)) : date
+    end
+end
+
+get_prev_trading_day_if_holiday(date::AbstractString) = get_prev_trading_day_if_holiday(Dates.Date(date, "yyyymmdd"))
 
 function get_prev_trading_day(date::Date)
     day_of_week = Dates.dayofweek(date)
@@ -271,6 +326,8 @@ function get_prev_trading_day(date::Date)
         return is_holiday(prev) ? get_prev_trading_day(prev) : prev
     end
 end
+
+get_prev_trading_day(date::AbstractString) = get_prev_trading_day(Dates.Date(date, "yyyymmdd"))
 
 function get_future_md(date, symbol, nan=true)
     dt = format_dt(date)

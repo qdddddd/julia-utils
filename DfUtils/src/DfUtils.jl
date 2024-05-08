@@ -1,5 +1,5 @@
 module DfUtils
-export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!
+export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!, round_df!
 
 using DataFrames, DataFramesMeta, Base.Threads, StatsBase, HDF5, FileIO
 using CommonUtils: to_datetime, squeeze, format_number
@@ -153,6 +153,11 @@ function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
             df[df[!, col].>=lower.&&df[!, col].<upper, bin_col_name] .= i
         end
     end
+    df
+end
+
+function round_df!(df; digits=0)
+    df[!, (<:).(eltype.(eachcol(df)), Union{Float64, Float32, Missing})] .= round.(df[!, (<:).(eltype.(eachcol(df)), Union{Float64, Float32, Missing})], digits=digits)
     df
 end
 
