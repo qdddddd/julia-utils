@@ -76,7 +76,7 @@ function get_index_members(conn, date, index::AbstractString; skip_st=false, ski
         WITH '$(format_dt(date))' AS dt
         SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM $(table)
         WHERE $(index_col) = '$(index_code)'
-            AND (S_CON_OUTDATE > dt OR S_CON_OUTDATE is NULL)
+            AND (S_CON_OUTDATE >= dt OR S_CON_OUTDATE is NULL)
             AND S_CON_INDATE <= dt
             $(st_query)
             $(stop_query)
