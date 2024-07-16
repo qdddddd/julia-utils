@@ -1,5 +1,5 @@
 module DfUtils
-export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!, round_df!
+export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!, round_df!, rolling_sum, rolling_mean
 
 using DataFrames, DataFramesMeta, Base.Threads, StatsBase, HDF5, FileIO
 using CommonUtils: to_datetime, squeeze, format_number
@@ -11,7 +11,7 @@ end
 head(df, n=5) = df[1:min(nrow(df), n), :]
 tail(df, n=5) = df[max(end - n + 1, 1):end, :]
 
-_eq(a, b) = ifelse(b === missing, ismissing(a), a == b)
+_eq(a, b) = ifelse(ismissing(b), ismissing(a), a == b)
 ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]
 backfill(v, mark=missing) = reverse(ffill(reverse(v), mark))
 fillna(v::AbstractVecOrMat, val) = map(x -> isnan(x) ? val : x, v)
@@ -32,37 +32,44 @@ function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_colum
 end
 
 function from_hdf(
-    filename::AbstractString,
+    filename::AbstractString;
     feature_names::Union{Vector{AbstractString},Vector{Symbol},Nothing}=nothing,
     window_feature_names::Union{Vector{AbstractString},Vector{Symbol},Nothing}=nothing,
-    label_names::Union{Vector{AbstractString},Vector{Symbol},Nothing}=nothing
+    label_names::Union{Vector{AbstractString},Vector{Symbol},Nothing}=nothing,
+    insert_ts::Bool=true
 )
-    hdf = read_hdf(filename)
-    if (!haskey(hdf, "x"))
-        return missing, missing
-    end
+    X1, X2, Y = nothing, nothing, nothing
 
-    ts = hdf["timestamp"] .|> to_datetime
-    seq = haskey(hdf, "appseq") ? hdf["appseq"] : missing
+    h5open(filename, "r") do file
+        hdf = read(file)
 
-    X1 = hdf["x"]
-    X1 = squeeze(X1) |> transpose
-    X1 = DataFrame(X1, feature_names)
+        if (!haskey(hdf, "x"))
+            return X1, X2, Y
+        end
 
-    X2 = DataFrame()
-    if haskey(hdf, "wx")
-        X2 = hdf["wx"] |> squeeze |> transpose
-        X2 = DataFrame(X2, window_feature_names)
-        insertcols!(X2, 1, :Timestamp => ts)
-    end
+        ts = insert_ts ? hdf["timestamp"] .|> to_datetime : nothing
+        seq = haskey(hdf, "appseq") ? hdf["appseq"] : missing
 
-    Y = DataFrame(transpose(hdf["y"]), label_names)
-    insertcols!(Y, 1, :Timestamp => ts)
+        if !isnothing(feature_names)
+            X1 = DataFrame(hdf["x"] |> squeeze |> transpose, feature_names)
+            insert_ts && insertcols!(X1, 1, :Timestamp => ts)
+        end
 
-    if seq !== missing
-        insertcols!(X1, 1, :AppSeq => seq)
-        insertcols!(X2, 1, :AppSeq => seq)
-        insertcols!(Y, 1, :AppSeq => seq)
+        if haskey(hdf, "wx") && !isnothing(window_feature_names)
+            X2 = DataFrame(hdf["wx"] |> squeeze |> transpose, window_feature_names)
+            insert_ts && insertcols!(X2, 1, :Timestamp => ts)
+        end
+
+        if !isnothing(label_names)
+            Y = DataFrame(transpose(hdf["y"]), label_names)
+            insert_ts && insertcols!(Y, 1, :Timestamp => ts)
+        end
+
+        if !ismissing(seq)
+            !isnothing(X1) && insertcols!(X1, 1, :AppSeq => seq)
+            !isnothing(X2) && insertcols!(X2, 1, :AppSeq => seq)
+            !isnothing(Y) && insertcols!(Y, 1, :AppSeq => seq)
+        end
     end
 
     return X1, X2, Y
@@ -73,10 +80,10 @@ function shift(arr::AbstractVector, n::Int, fill_missing=missing)
 
     if n > 0
         ret[1:n] .= fill_missing
-        ret[n+1:end] = arr[1:end-n]
+        ret[n+1:end] .= @view arr[1:end-n]
     elseif n < 0
         ret[end+n+1:end] .= fill_missing
-        ret[1:end+n] = arr[-n+1:end]
+        ret[1:end+n] .= @view arr[-n+1:end]
     end
 
     return ret
@@ -157,8 +164,80 @@ function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
 end
 
 function round_df!(df; digits=0)
-    df[!, (<:).(eltype.(eachcol(df)), Union{Float64, Float32, Missing})] .= round.(df[!, (<:).(eltype.(eachcol(df)), Union{Float64, Float32, Missing})], digits=digits)
+    df[!, (<:).(eltype.(eachcol(df)), Union{Float64,Float32,Missing})] .= round.(df[!, (<:).(eltype.(eachcol(df)), Union{Float64,Float32,Missing})], digits=digits)
     df
+end
+
+function rolling_sum(a, n::Int; forward=false, fill=false)
+    len = length(a)
+    out = Vector{Union{Missing,eltype(a)}}(missing, len)
+
+    if n > len && !fill
+        return out
+    end
+
+    if forward
+        out[1] = sum(a[1:min(n, len)])
+
+        @views for i in 2:len
+            if i + n - 1 <= len
+                out[i] = out[i-1] + a[i+n-1] - a[i-1]
+            elseif fill
+                out[i] = out[i-1] - a[i-1]
+            end
+        end
+    else
+        out[1] = a[1]
+        @views for i in 2:len
+            if i <= n
+                out[i] = out[i-1] + a[i]
+            else
+                out[i] = out[i-1] + a[i] - a[i-n]
+            end
+        end
+
+        if !fill
+            out[1:min(n, len)-1] .= missing
+        end
+    end
+    out
+end
+
+function rolling_mean(a, n::Int; forward=false)
+    len = length(a)
+    out = Vector{Float64}(undef, len)
+
+    if forward
+        c = min(n, len)
+        s = sum(@view a[1:c])
+
+        out[1] = s / c
+
+        @views for i in 2:len
+            if i + n - 1 <= len
+                s = s + a[i+n-1] - a[i-1]
+            else
+                s = s - a[i-1]
+                c -= 1
+            end
+
+            out[i] = s / c
+        end
+    else
+        c = 0
+        s = 0
+        @views for i in 1:len
+            if i <= n
+                c += 1
+                s += a[i]
+            else
+                s = s + a[i] - a[i-n]
+            end
+
+            out[i] = s / c
+        end
+    end
+    out
 end
 
 end

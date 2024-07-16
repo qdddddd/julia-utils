@@ -1,4 +1,4 @@
-using Pkg
+using Pkg, Logging
 
 print("Install deps globally (y/n): ")
 if readline()[1] == 'y'
@@ -31,10 +31,12 @@ if readline()[1] == 'y'
     filter!(x -> x ∉ to_rm, deps)
 
     for dep in deps
+        @info "Installing $(dep)"
         Pkg.add(dep)
     end
 end
 
+@info "Installing Python dependencies"
 run(`pip3 install pymssql`)
 
 for name in readdir(@__DIR__)
@@ -43,6 +45,7 @@ for name in readdir(@__DIR__)
     end
     dir = joinpath(@__DIR__, name)
     if isdir(dir) && !startswith(name, ".")
+        @info "Installing $(name)"
         Pkg.activate(name)
         Pkg.update()
         Pkg.activate()
