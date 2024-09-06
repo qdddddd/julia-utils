@@ -3,7 +3,7 @@
 exec julia "${BASH_SOURCE[0]}" "$@"
 =#
 
-using PackageCompiler
+using PackageCompiler, Glob
 
 function compile(args)
     img_name = "sysimg.so"
@@ -23,13 +23,8 @@ function compile(args)
 
     # Get packages to compile by
     # parsing the "using" statements
-    for (root_, _, files_) in walkdir(root)
-        for file in files_
-            if (!endswith(file, ".jl"))
-                continue
-            end
-
-            f = "$(root_)/$(file)"
+    for (r, _, _) in walkdir(root)
+        for f in glob(glob"*.jl", r)
             push!(exe_files, f)
             using_statements = filter(line -> startswith(line, "using "), readlines(open(f)))
             for line in using_statements
@@ -42,8 +37,7 @@ function compile(args)
     unique!(packages)
     @show packages
     @show exe_files
-    # create_sysimage(packages, sysimage_path=img_path, precompile_execution_file=exe_files)
-    create_sysimage(sysimage_path=img_path, precompile_execution_file=exe_files)
+    create_sysimage(packages; sysimage_path=img_path, precompile_execution_file=exe_files, incremental=true)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

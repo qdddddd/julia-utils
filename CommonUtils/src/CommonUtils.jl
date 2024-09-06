@@ -2,7 +2,7 @@ module CommonUtils
 using Base: AbstractVecOrTuple
 export to_datetime, sample, count_values, squeeze, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile, to_milli, to_readable_size, totalsize
 
-using Dates, StatsBase, Statistics
+using Dates, StatsBase, Statistics, .Threads
 
 include("precompiler.jl")
 
