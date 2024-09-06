@@ -433,12 +433,13 @@ function to_file(_p, fn, dir="/home/qdu/store/bt_results/")
     path = dir * fn
     mkpath(dirname(path))
     if (endswith(fn, ".svg"))
-        path = replace(path, ".svg" => ".html")
-        savefig(_p, path; width=w, height=h)
-        convert_html_to_svg(path)
+        out_file = replace(path, ".svg" => ".html")
+        savefig(_p, out_file; width=w, height=h)
+        convert_html_to_svg(out_file)
     else
         savefig(_p, path; width=w, height=h)
     end
+    return path
 end
 
 function get_x_domain(i, n, space)

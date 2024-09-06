@@ -61,7 +61,7 @@ mutable struct ClickHouseClient
     max_connections::Int
     id::Int
 
-    ClickHouseClient(max_connections::Int = 10) = new(
+    ClickHouseClient(max_connections::Int=1) = new(
         [connect_ch() for _ in 1:max_connections], [ReentrantLock() for _ in 1:(max_connections+1)], max_connections, 0
     )
 end
@@ -88,6 +88,11 @@ function select_df(client::ClickHouseClient, query::String)
     end
 end
 
+reconnect!(client::ClickHouseClient) =
+    for i in eachindex(client.pool)
+        client.pool[i] = connect_ch()
+    end
+
 # ===========================================================
 
 function get_md(date, symbol, nan=true)
@@ -105,7 +110,9 @@ function get_md(date, symbol, nan=true)
     bucket *= postfix
     fn = "$(dt)/$(symbol)_$(dt).gz"
 
-    if !mc_isfile("$(bucket)/$(fn)") return nothing end
+    if !mc_isfile("$(bucket)/$(fn)")
+        return nothing
+    end
 
     global minio_cfg
     df = CSV.File(s3_get(minio_cfg, bucket, fn);
@@ -124,7 +131,7 @@ function get_md(date, symbol, nan=true)
     return df
 end
 
-function get_index(name, date)
+function get_index(name, date; unix=false)
     dt = format_dt(date)
     bucket = "ivocapmarket"
     fn = "$(dt)/$(index_codes[name]).csv.gz"
@@ -135,9 +142,15 @@ function get_index(name, date)
 
     global minio_cfg
     df = CSV.File(s3_get(minio_cfg, bucket, fn); select=[:TimeInMillSeconds, :LastPrice]) |> DataFrame
-    df = combine(groupby(df, :TimeInMillSeconds), last)
-    df[!, :ExTime] = unix2datetime.(df.TimeInMillSeconds ./ 1000 .+ (8*3600))
-    sort!(df, :TimeInMillSeconds)
+    rename!(df, :TimeInMillSeconds => :ExTime)
+    df = combine(groupby(df, :ExTime), last)
+    df[!, :LastPrice] = round.(df.LastPrice, digits=4)
+
+    if !unix
+        df[!, :ExTime] = unix2datetime.(df.ExTime ./ 1000 .+ (8 * 3600))
+    end
+
+    sort!(df, :ExTime)
     return df[!, [:ExTime, :LastPrice]]
 end
 
@@ -146,6 +159,7 @@ _date_fmt = dateformat"yyyy-mm-dd HH:MM:SS.s"
 function get_od(date, symbol)
     bucket = ""
     postfix = ""
+    dt = format_dt(date)
     if endswith(symbol, "SZ")
         bucket = "szeorder"
         postfix = dt < "20160510" ? "" : "-lc"
@@ -181,12 +195,13 @@ end
 function get_td(date, symbol)
     bucket = ""
     postfix = ""
-    if endswith(symbol, "SZ")
-        bucket = "szetrade"
-        postfix = dt < "20160510" ? "" : "-lc"
+    dt = format_dt(date)
+    is_sz = endswith(symbol, "SZ")
+    if is_sz
+        bucket = "szetrade-lc"
     else
         bucket = "ssetrade"
-        postfix = dt < "20211020" ? "" : "-lc"
+        postfix = dt < "20240601" ? "-lc" : "-v2"
     end
 
     bucket *= postfix
@@ -195,27 +210,14 @@ function get_td(date, symbol)
     df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
 
     if hasproperty(df, :Timestamp)
-        time_col = :Timestamp
-    else
-        time_col = :TimeStamp
+        df[!, :Timestamp] = DateTime.(df[!, :Timestamp], _date_fmt)
     end
 
-    # if endswith(symbol, "SZ")
-        # df[!, time_col] = DateTime.(df[!, time_col], _date_fmt)
+    if hasproperty(df, :ExTime)
+        df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
+    end
 
-        # if hasproperty(df, :ExTime)
-            # df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
-        # end
-    # else
-        # if hasproperty(df, :ExTime)
-            # df[!, time_col] = DateTime.(df[!, time_col], _date_fmt)
-            # df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
-        # else
-            # df[!, time_col] = CommonUtils.to_datetime.(df[!, time_col], 3)
-        # end
-    # end
-
-    sort!(df, time_col)
+    sort!(df, is_sz ? :AppSeq : :BizIndex)
     return df
 end
 
@@ -334,7 +336,9 @@ function get_future_md(date, symbol, nan=true)
     bucket = "option"
     fn = "$(dt)/$(symbol)_$(dt).gz"
 
-    if !mc_isfile("$(bucket)/$(fn)") return nothing end
+    if !mc_isfile("$(bucket)/$(fn)")
+        return nothing
+    end
 
     global minio_cfg
     df = CSV.read(

@@ -12,17 +12,17 @@ head(df, n=5) = df[1:min(nrow(df), n), :]
 tail(df, n=5) = df[max(end - n + 1, 1):end, :]
 
 _eq(a, b) = ifelse(ismissing(b), ismissing(a), a == b)
-ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))], :]
+ffill(v, mark=missing) = v[[ifelse(x != 0, x, 1) for x in accumulate(max, .!_eq.(v, mark) .* (1:length(v)))]]
 backfill(v, mark=missing) = reverse(ffill(reverse(v), mark))
 fillna(v::AbstractVecOrMat, val) = map(x -> isnan(x) ? val : x, v)
 fillna!(v::AbstractVecOrMat, val) = map!(x -> isnan(x) ? val : x, v, v)
 fillna(df::DataFrame, val) = map(col -> fillna(col, val), eachcol(df))
 
-function interpolate(df::DataFrame, ts::AbstractVector, column::Symbol, ts_column::Symbol=:Timestamp; rev=false)
+function interpolate(df::Union{SubDataFrame,DataFrame}, ts::AbstractVector, column::Symbol, ts_column::Symbol=:Timestamp; rev=false)
     l_tmp = DataFrame(ts_column => ts, column => missing)
     l_tmp[!, :label] .= !rev
 
-    r_tmp = df[!, [ts_column, column]]
+    r_tmp = df[:, [ts_column, column]]
     r_tmp[!, :label] .= rev
 
     joined = sort(vcat(l_tmp, r_tmp), [ts_column, :label], rev=rev)
@@ -40,28 +40,26 @@ function from_hdf(
 )
     X1, X2, Y = nothing, nothing, nothing
 
-    h5open(filename, "r") do file
-        hdf = read(file)
-
+    h5open(filename, "r") do hdf
         if (!haskey(hdf, "x"))
             return X1, X2, Y
         end
 
-        ts = insert_ts ? hdf["timestamp"] .|> to_datetime : nothing
-        seq = haskey(hdf, "appseq") ? hdf["appseq"] : missing
+        ts = insert_ts ? read(hdf, "timestamp") .|> to_datetime : nothing
+        seq = haskey(hdf, "appseq") ? read(hdf, "appseq") : missing
 
         if !isnothing(feature_names)
-            X1 = DataFrame(hdf["x"] |> squeeze |> transpose, feature_names)
+            X1 = DataFrame(read(hdf, "x") |> squeeze |> transpose, feature_names)
             insert_ts && insertcols!(X1, 1, :Timestamp => ts)
         end
 
         if haskey(hdf, "wx") && !isnothing(window_feature_names)
-            X2 = DataFrame(hdf["wx"] |> squeeze |> transpose, window_feature_names)
+            X2 = DataFrame(read(hdf, "wx") |> squeeze |> transpose, window_feature_names)
             insert_ts && insertcols!(X2, 1, :Timestamp => ts)
         end
 
         if !isnothing(label_names)
-            Y = DataFrame(transpose(hdf["y"]), label_names)
+            Y = DataFrame(transpose(read(hdf, "y")), label_names)
             insert_ts && insertcols!(Y, 1, :Timestamp => ts)
         end
 
@@ -163,8 +161,10 @@ function add_bins!(df, col; n_bins=10, bin_col_name=:Bin)
     df
 end
 
-function round_df!(df; digits=0)
-    df[!, (<:).(eltype.(eachcol(df)), Union{Float64,Float32,Missing})] .= round.(df[!, (<:).(eltype.(eachcol(df)), Union{Float64,Float32,Missing})], digits=digits)
+function round_df!(df; digits=0, exclude=nothing)
+    isnothing(exclude) && (exclude = String[]) || (exclude = string.(exclude))
+    cols = (<:).(eltype.(eachcol(df)), Union{Float64,Float32,Missing}) .& (∉).(names(df), Ref(exclude))
+    df[!, cols] .= round.(df[!, cols], digits=digits)
     df
 end
 

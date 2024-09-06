@@ -1,6 +1,6 @@
 module CommonUtils
 using Base: AbstractVecOrTuple
-export to_datetime, sample, count_values, squeeze, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile, to_milli
+export to_datetime, sample, count_values, squeeze, format_number, join_str, format_dt, colwise, rowwise, product, get_fee_rate, compile, to_milli, to_readable_size, totalsize
 
 using Dates, StatsBase, Statistics
 
@@ -97,6 +97,40 @@ function to_milli(str)
     else
         return parse(Int, str)
     end
+end
+
+function to_readable_size(bytes::Number)
+    sizes = ["B", "KB", "MB", "GB", "TB"]
+    i = 1
+    while bytes >= 1024
+        if i == length(sizes)
+            break
+        end
+
+        bytes /= 1024
+        i += 1
+    end
+
+    string(round(bytes, digits=2), " ", sizes[i])
+end
+
+function totalsize(dirpath; noprint=false)
+    ret = Atomic{Int64}(0)
+    for (root, _, files) in walkdir(dirpath)
+        s = filesize(root)
+        atomic_add!(ret, s)
+        @threads for f in files
+            file = joinpath(root, f)
+            size = filesize(file)
+            atomic_add!(ret, size)
+        end
+    end
+
+    if !noprint
+        print(ret[] / (1024^3), " GB", "\r")
+    end
+
+    ret[]
 end
 
 end

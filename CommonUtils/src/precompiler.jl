@@ -42,7 +42,8 @@ function compile(args)
     unique!(packages)
     @show packages
     @show exe_files
-    create_sysimage(packages, sysimage_path=img_path, precompile_execution_file=exe_files)
+    # create_sysimage(packages, sysimage_path=img_path, precompile_execution_file=exe_files)
+    create_sysimage(sysimage_path=img_path, precompile_execution_file=exe_files)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
