@@ -71,6 +71,10 @@ function format_dt(dt, fmt=dateformat"yyyymmdd")
         return string(dt)
     end
 
+    if isa(dt, Number)
+        return string(dt)
+    end
+
     uqv = unique(dt)
     uqvDate = Dates.format.(uqv, fmt)
     dateDict = Dict(uqv .=> uqvDate)

@@ -2,7 +2,7 @@ using Pkg, Logging
 
 print("Install deps globally (y/n): ")
 if readline()[1] == 'y'
-    deps = []
+    deps = String[]
     to_rm = []
     for name in readdir(@__DIR__)
         if name == "false"
@@ -29,11 +29,9 @@ if readline()[1] == 'y'
     end
     unique!(deps)
     filter!(x -> x ∉ to_rm, deps)
+    @show deps
 
-    for dep in deps
-        @info "Installing $(dep)"
-        Pkg.add(dep)
-    end
+    Pkg.add(deps)
 end
 
 @info "Installing Python dependencies"

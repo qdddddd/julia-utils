@@ -1,6 +1,6 @@
 module DbUtils
 
-export connect_ch, reconnect, conn, execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, select_df, ClickHouseClient
+export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, gcli
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
 using CommonUtils: format_dt, to_datetime
@@ -8,8 +8,9 @@ using CommonUtils: format_dt, to_datetime
 include("../../constants.jl")
 
 global _conn = nothing
+global _cli = nothing
 global ch_conf = nothing
-global mini_cfg = nothing
+global minio_cfg = nothing
 
 function __init__()
     global ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
@@ -26,24 +27,13 @@ function connect_ch()
     conn
 end
 
-function reconnect()
-    global _conn = connect_ch()
-    _conn
-end
-
-function conn()
-    global _conn
-    if _conn !== nothing && is_connected(_conn)
-        return _conn
-    else
-        return reconnect()
-    end
-end
-
 function execute_queries(queries, to_throw=false)
     for q in queries
         try
-            execute(_conn, q)
+            c, lk = get_conn!(_cli)
+            lock(lk) do
+                execute(c, q)
+            end
         catch e
             if to_throw
                 throw(e)
@@ -73,7 +63,7 @@ function get_conn!(client::ClickHouseClient)
     end
 
     lock(client.lks[i]) do
-        if !is_connected(client.pool[i])
+        if !ClickHouse.is_connected(client.pool[i])
             client.pool[i] = connect_ch()
         end
     end
@@ -81,10 +71,25 @@ function get_conn!(client::ClickHouseClient)
     return client.pool[i], client.lks[i]
 end
 
-function select_df(client::ClickHouseClient, query::String)
+function query_df(client::ClickHouseClient, query::String)
     c, lk = get_conn!(client)
     lock(lk) do
-        ClickHouse.select_df(c, query)
+        n_trial = 0
+        while n_trial < client.max_connections
+            try
+                return ClickHouse.select_df(c, query)
+            catch e
+                n_trial += 1
+
+                if e isa EOFError
+                    c, lk = get_conn!(client)
+                elseif n_trial == client.max_connections
+                    throw(e)
+                end
+            end
+        end
+
+        throw(ErrorException("Failed to execute query `$query`. Max number of trials reached"))
     end
 end
 
@@ -93,18 +98,32 @@ reconnect!(client::ClickHouseClient) =
         client.pool[i] = connect_ch()
     end
 
+is_connected(cli::ClickHouseClient) = all(ClickHouse.is_connected, cli.pool)
+
+function gcli()
+    global _cli
+    if !isnothing(_cli)
+        if !is_connected(_cli)
+            reconnect!(_cli)
+        end
+    else
+        _cli = ClickHouseClient()
+    end
+
+    return _cli
+end
+
 # ===========================================================
 
-function get_md(date, symbol, nan=true)
+function get_md(date, symbol; nan=true, lite=true)
     dt = format_dt(date)
     bucket = ""
     postfix = ""
     if endswith(symbol, "SZ")
-        bucket = "sze"
-        postfix = dt < "20160510" ? "" : "-lc"
+        bucket = "sze-lc"
     else
         bucket = "sse"
-        postfix = dt < "20211020" ? "" : "-lc"
+        postfix = dt < "20240522" ? "-lc" : "-v2"
     end
 
     bucket *= postfix
@@ -115,19 +134,31 @@ function get_md(date, symbol, nan=true)
     end
 
     global minio_cfg
-    df = CSV.File(s3_get(minio_cfg, bucket, fn);
-        select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
+    df = CSV.read(
+        s3_get(minio_cfg, bucket, fn), DataFrame;
+        select=(lite ? [:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover] : nothing),
         types=Dict(:BidPrice1 => Float32, :AskPrice1 => Float32, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",
         ntasks=1
-    ) |> DataFrame
+    )
+
+    df[!, :MidPrice] = (df.BidPrice1 .+ df.AskPrice1) ./ 2
+    df_sub = @view df[df.BidPrice1.<1e-3, :]
+    df_sub[!, :MidPrice] = df_sub.AskPrice1
+    df_sub = @view df[df.AskPrice1.<1e-3, :]
+    df_sub[!, :MidPrice] = df_sub.BidPrice1
 
     if nan
         replace!(df[!, :BidPrice1], 0 => NaN)
         replace!(df[!, :AskPrice1], 0 => NaN)
     end
     # unique!(df, :ExTime)
-    sort!(df, :ExTime)
+    sort!(df, [:AppSeq, :ExTime])
+
+    if hasproperty(df, :TimeStamp)
+        rename!(df, :TimeStamp => :Timestamp)
+    end
+
     return df
 end
 
@@ -137,11 +168,11 @@ function get_index(name, date; unix=false)
     fn = "$(dt)/$(index_codes[name]).csv.gz"
 
     if !mc_isfile("$(bucket)/$(fn)")
-        return
+        return nothing
     end
 
     global minio_cfg
-    df = CSV.File(s3_get(minio_cfg, bucket, fn); select=[:TimeInMillSeconds, :LastPrice]) |> DataFrame
+    df = CSV.read(s3_get(minio_cfg, bucket, fn), DataFrame; select=[:TimeInMillSeconds, :LastPrice])
     rename!(df, :TimeInMillSeconds => :ExTime)
     df = combine(groupby(df, :ExTime), last)
     df[!, :LastPrice] = round.(df.LastPrice, digits=4)
@@ -161,17 +192,20 @@ function get_od(date, symbol)
     postfix = ""
     dt = format_dt(date)
     if endswith(symbol, "SZ")
-        bucket = "szeorder"
-        postfix = dt < "20160510" ? "" : "-lc"
+        bucket = "szeorder-lc"
     else
         bucket = "sseorder"
-        postfix = dt < "20211020" ? "" : "-lc"
+        postfix = dt < "20240522" ? "-lc" : "-v2"
     end
 
     bucket *= postfix
 
     global minio_cfg
-    df = CSV.File(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz")) |> DataFrame
+    df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
+
+    if hasproperty(df, :TimeStamp)
+        rename!(df, :TimeStamp => :Timestamp)
+    end
 
     if endswith(symbol, "SZ")
         df[!, :Timestamp] = DateTime.(df.Timestamp, _date_fmt)
@@ -179,16 +213,30 @@ function get_od(date, symbol)
         if hasproperty(df, :ExTime)
             df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
         end
-    else
+
+        df[!, :OrderType] .= :Insert
+    elseif endswith(symbol, "SH")
         if hasproperty(df, :ExTime)
             df[!, :Timestamp] = DateTime.(df.Timestamp, _date_fmt)
             df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
         else
             df[!, :Timestamp] = to_datetime.(df.Timestamp, 3)
         end
+
+        df[!, :OrderType] = Symbol.(df.OrderType)
     end
 
-    sort!(df, :Timestamp)
+    if hasproperty(df, :AppSeqNo)
+        rename!(df, :AppSeqNo => :AppSeq)
+    end
+
+    if hasproperty(df, :BizIndex)
+        rename!(df, :BizIndex => :AppSeq)
+    end
+
+    df[!, :Direction] .= Symbol.(df.Direction)
+
+    sort!(df, :AppSeq)
     return df
 end
 
@@ -201,13 +249,17 @@ function get_td(date, symbol)
         bucket = "szetrade-lc"
     else
         bucket = "ssetrade"
-        postfix = dt < "20240601" ? "-lc" : "-v2"
+        postfix = dt < "20240522" ? "-lc" : "-v2"
     end
 
     bucket *= postfix
 
     global minio_cfg
     df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
+
+    if hasproperty(df, :TimeStamp)
+        rename!(df, :TimeStamp => :Timestamp)
+    end
 
     if hasproperty(df, :Timestamp)
         df[!, :Timestamp] = DateTime.(df[!, :Timestamp], _date_fmt)
@@ -217,7 +269,22 @@ function get_td(date, symbol)
         df[!, :ExTime] = DateTime.(df.ExTime, _date_fmt)
     end
 
-    sort!(df, is_sz ? :AppSeq : :BizIndex)
+    if hasproperty(df, :AppSeqNo)
+        rename!(df, :AppSeqNo => :AppSeq)
+    end
+
+    if hasproperty(df, :BizIndex)
+        rename!(df, :BizIndex => :AppSeq)
+    end
+
+    if endswith(symbol, "SZ")
+        df[!, :Type] = ifelse.(df.TradeType .== "4", :Cancel, :Completed)
+        select!(df, Not(:TradeType))
+    elseif endswith(symbol, "SH")
+        df[!, :Type] .= :Completed
+    end
+
+    sort!(df, :AppSeq)
     return df
 end
 

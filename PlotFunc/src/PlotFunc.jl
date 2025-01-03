@@ -14,15 +14,15 @@ function __init__()
     global palette = ColorSchemes.Set2_8
     global default_color = ColorSchemes.Blues[6]
     global default_grid_color = "#E5ECF6"
-    global plot_template = PlotlyJS.plot().plot.layout.template
-    plot_template.layout.plot_bgcolor = :white
-    plot_template.layout.xaxis[:gridcolor] = default_grid_color
-    plot_template.layout.xaxis[:zerolinecolor] = default_grid_color
-    plot_template.layout.xaxis[:linecolor] = default_grid_color
-    plot_template.layout.yaxis[:gridcolor] = default_grid_color
-    plot_template.layout.yaxis[:zerolinecolor] = default_grid_color
-    plot_template.layout.yaxis[:linecolor] = default_grid_color
-    plot_template.layout.paper_bgcolor = :white
+    # global plot_template = PlotlyJS.plot().plot.layout.template
+    # plot_template.layout.plot_bgcolor = :white
+    # plot_template.layout.xaxis[:gridcolor] = default_grid_color
+    # plot_template.layout.xaxis[:zerolinecolor] = default_grid_color
+    # plot_template.layout.xaxis[:linecolor] = default_grid_color
+    # plot_template.layout.yaxis[:gridcolor] = default_grid_color
+    # plot_template.layout.yaxis[:zerolinecolor] = default_grid_color
+    # plot_template.layout.yaxis[:linecolor] = default_grid_color
+    # plot_template.layout.paper_bgcolor = :white
     # plot_template.layout.width=1460
     # plot_template.layout.height=500
 end
@@ -293,7 +293,7 @@ function plot_pnl(grpby, title="", real_static::Bool=false, real_open::Bool=fals
     return p
 end
 
-function get_bt_trades(conn, date, symbol, ih)
+function get_bt_trades(cli, date, symbol, ih)
     if ih === nothing
         return get_bt_trades(date, symbol)
     end
@@ -304,19 +304,19 @@ function get_bt_trades(conn, date, symbol, ih)
         WHERE Symbol = '$symbol' AND toDate(Timestamp) = '$date' AND InputHash LIKE '$(ih)%'
         ORDER BY Timestamp
     """
-    ret = select_df(conn, query)
+    ret = query_df(cli, query)
     ret.Timestamp .= ret.Timestamp .+ Dates.Hour(8)
     return ret
 end
 
-function get_bt_trades(conn, start_date::Date, end_date::Date, ih::String)
+function get_bt_trades(cli, start_date::Date, end_date::Date, ih::String)
     query = """
         SELECT *, Price * FilledVolume Turnover, if(Direction = 'B', FilledVolume, -FilledVolume) Volume
         FROM $trade_tb
         WHERE toDate(Timestamp) >= '$start_date' AND toDate(Timestamp) <= '$end_date' AND InputHash LIKE '$(ih)%'
         ORDER BY Timestamp
     """
-    ret = select_df(conn, query)
+    ret = query_df(cli, query)
     ret.Timestamp .= ret.Timestamp .+ Dates.Hour(8)
     return ret
 end

@@ -7,32 +7,41 @@ using DfUtils, DbUtils, CommonUtils
 include("../../constants.jl")
 
 function get_st(date, symbol)
-    ClickHouse.select_df(conn(), """
-        WITH '$(format_dt(date))' as dt
-        SELECT * FROM winddb_mirror.asharest FINAL
-        WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-            AND S_INFO_WINDCODE = '$(symbol)'
-    """)
+    query_df(
+        gcli(),
+        """
+    WITH '$(format_dt(date))' as dt
+    SELECT * FROM winddb_mirror.asharest FINAL
+    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+        AND S_INFO_WINDCODE = '$(symbol)'
+"""
+    )
 end
 
 function get_st(date)
-    ClickHouse.select_df(conn(), """
-        WITH '$(format_dt(date))' as dt
-        SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
-        WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
-    """)
+    query_df(
+        gcli(),
+        """
+    WITH '$(format_dt(date))' as dt
+    SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
+    WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
+"""
+    )
 end
 
 function get_stop_tradings(date)
-    ClickHouse.select_df(conn(), """
-        WITH '$(format_dt(date))' as dt
-        SELECT DISTINCT toString(S_INFO_WINDCODE) Code
-        FROM winddb_mirror.ashareeodprices FINAL
-        WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
-    """).Code
+    query_df(
+        gcli(),
+        """
+    WITH '$(format_dt(date))' as dt
+    SELECT DISTINCT toString(S_INFO_WINDCODE) Code
+    FROM winddb_mirror.ashareeodprices FINAL
+    WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
+"""
+    ).Code
 end
 
-function get_index_members(conn, date, index::AbstractString; skip_st=false, skip_stop=false)
+function get_index_members(cli, date, index::AbstractString; skip_st=false, skip_stop=false)
     st_query = """
         $(skip_st ? "" : """
             AND Code NOT IN (
@@ -54,13 +63,16 @@ function get_index_members(conn, date, index::AbstractString; skip_st=false, ski
     """
 
     if index == "All"
-        return ClickHouse.select_df(conn, """
-            WITH '$(format_dt(date))' AS dt
-            SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_mirror.ashareeodprices FINAL
-            WHERE TRADE_DT = dt
-                $(st_query)
-                $(stop_query)
-        """)
+        return query_df(
+            cli,
+            """
+                WITH '$(format_dt(date))' AS dt
+                SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT = dt
+                    $(st_query)
+                    $(stop_query)
+            """
+        )
     end
 
     index_code = index_codes[index]
@@ -72,18 +84,22 @@ function get_index_members(conn, date, index::AbstractString; skip_st=false, ski
         index_col = "S_INFO_WINDCODE"
     end
 
-    ClickHouse.select_df(conn, """
-        WITH '$(format_dt(date))' AS dt
-        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM $(table)
-        WHERE $(index_col) = '$(index_code)'
-            AND (S_CON_OUTDATE >= dt OR S_CON_OUTDATE is NULL)
-            AND S_CON_INDATE <= dt
-            $(st_query)
-            $(stop_query)
-    """)
+    query_df(
+        cli,
+        """
+            WITH '$(format_dt(date))' AS dt
+            SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM $(table)
+            WHERE $(index_col) = '$(index_code)'
+                AND (S_CON_OUTDATE >= dt OR S_CON_OUTDATE is NULL)
+                AND S_CON_INDATE <= dt
+                $(st_query)
+                $(stop_query)
+            ORDER BY Code
+        """
+    ).Code
 end
 
-function get_index_members(conn, date, indexes::AbstractVecOrTuple; skip_st=false, skip_stop=false)
+function get_index_members(cli, date, indexes::AbstractVecOrTuple; skip_st=false, skip_stop=false)
     dt = format_dt(date)
     st_query = """
         $(skip_st ? "" : """
@@ -108,131 +124,143 @@ function get_index_members(conn, date, indexes::AbstractVecOrTuple; skip_st=fals
     wi_indexes_query = join_str([index_codes[x] for x in indexes[endswith.(indexes, "WI")]])
     other_indexes_query = join_str([index_codes[x] for x in indexes[.!endswith.(indexes, "WI")]])
 
-    ClickHouse.select_df(conn, """
-        SELECT * FROM (
-            SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmembers FINAL
-            WHERE S_INFO_WINDCODE IN ($(other_indexes_query))
-                AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
-                AND S_CON_INDATE <= '$(dt)'
-                $(st_query)
-                $(stop_query)
+    query_df(
+        cli,
+        """
+    SELECT * FROM (
+        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmembers FINAL
+        WHERE S_INFO_WINDCODE IN ($(other_indexes_query))
+            AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
+            AND S_CON_INDATE <= '$(dt)'
+            $(st_query)
+            $(stop_query)
 
-            UNION ALL
+        UNION ALL
 
-            SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmemberswind FINAL
-            WHERE F_INFO_WINDCODE IN ($(wi_indexes_query))
-                AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
-                AND S_CON_INDATE <= '$(dt)'
-                $(st_query)
-                $(stop_query)
-        )
-        ORDER BY Code
-    """)
+        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmemberswind FINAL
+        WHERE F_INFO_WINDCODE IN ($(wi_indexes_query))
+            AND (S_CON_OUTDATE >= '$(dt)' OR S_CON_OUTDATE is NULL)
+            AND S_CON_INDATE <= '$(dt)'
+            $(st_query)
+            $(stop_query)
+    )
+    ORDER BY Code
+"""
+    )
 end
 
 function get_apr_info(date, codes, c=nothing)
     if c === nothing
-        c = conn()
+        c = gcli()
     end
-    ClickHouse.select_df(c, """
-        WITH '$(CommonUtils.format_dt(date))' AS dt
-            SELECT Code, OpenPrice, ClosePrice, PreClosePrice, AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue, TradeStatus,
-                   (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
+    query_df(
+        c,
+        """
+            WITH '$(CommonUtils.format_dt(date))' AS dt
+                SELECT Code, OpenPrice, ClosePrice, PreClosePrice,
+                       AdjFactorRolling, Amount, Volume, TotalMarketValue, FreeMarketValue,
+                       (1 + ifNull(StrikeRate, 0) + ifNull(CashRate, 0) / OpenPrice) AdjFactor
+                FROM (
+                    SELECT * FROM (
+                        -- 基本信息
+                        SELECT S_INFO_WINDCODE               Code,
+                               toFloat64(S_DQ_OPEN)          OpenPrice,
+                               toFloat64(S_DQ_CLOSE)         ClosePrice,
+                               toFloat64(S_DQ_PRECLOSE)      PreClosePrice,
+                               toFloat64(S_DQ_ADJFACTOR)     AdjFactorRolling,
+                               toFloat64(S_DQ_AMOUNT) * 1000 Amount,
+                               toInt64(S_DQ_VOLUME * 100)    Volume
+                        FROM winddb_mirror.ashareeodprices FINAL
+                        WHERE TRADE_DT = dt) AS TmpEodP
+                    JOIN (
+                        -- 查市值数据
+                        SELECT S_INFO_WINDCODE             Code,
+                               toFloat64(S_VAL_MV) * 10000 TotalMarketValue,
+                               toFloat64(S_DQ_MV) * 10000  FreeMarketValue
+                        FROM winddb_mirror.ashareeodderivativeindicator FINAL
+                        WHERE TRADE_DT = dt) AS TmpEodC
+                    ON TmpEodP.Code = TmpEodC.Code
+                    WHERE abs(ClosePrice) > 0.0001 AND abs(PreClosePrice) > 0.0001
+                        AND Code IN ($(CommonUtils.join_str(codes)))
+                ) AS ET
+                LEFT JOIN (
+                    SELECT EX_DT Date, WIND_CODE Code, CASH_DVD_PER_SH_AFTER_TAX CashRate, STK_DVD_PER_SH StrikeRate
+                    FROM winddb_mirror.asharedividend FINAL
+                    WHERE Date = dt
+                ) AS DT
+                ON ET.Code = DT.Code
+        """
+    )
+end
+
+function get_apr_simple_ver(date, rolling_window, codes, cli=nothing)
+    if cli === nothing
+        cli = gcli()
+    end
+    query_df(
+        cli,
+        """
+            WITH '$(CommonUtils.format_dt(date))' AS dt,
+                $(rolling_window) AS rw,
+                dates AS (
+                   SELECT DISTINCT TRADE_DT
+                   FROM winddb_mirror.ashareeodprices FINAL
+                   WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
+                   ORDER BY TRADE_DT DESC
+                   LIMIT rw
+                ),
+                dates100 AS (
+                   SELECT DISTINCT TRADE_DT
+                   FROM winddb_mirror.ashareeodprices FINAL
+                   WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
+                   ORDER BY TRADE_DT DESC
+                   LIMIT 100
+                )
+            SELECT Code,
+                  AvgAmount,
+                  AvgAmplitude,
+                  AvgTRTotal,
+                  AvgTRFree,
+                  AvgTotalMarketValue,
+                  AvgFreeMarketValue
             FROM (
-                SELECT * FROM (
-                    -- 基本信息
-                    SELECT S_INFO_WINDCODE                    Code,
-                           toDecimal64(S_DQ_OPEN, 4)          OpenPrice,
-                           toDecimal64(S_DQ_CLOSE, 4)         ClosePrice,
-                           toDecimal64(S_DQ_PRECLOSE, 4)      PreClosePrice,
-                           toDecimal64(S_DQ_ADJFACTOR, 6)     AdjFactorRolling,
-                           toDecimal64(S_DQ_AMOUNT, 4) * 1000 Amount,
-                           toInt64(S_DQ_VOLUME * 100)         Volume,
-                           S_DQ_TRADESTATUS                   TradeStatus
+                -- 历史平均成交额&振幅
+                SELECT *, greatest(avgAmount, avgAmount100) AvgAmount
+                FROM (
+                    SELECT S_INFO_WINDCODE                               Code,
+                           avg(S_DQ_AMOUNT) * 1000                       avgAmount,
+                           avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
                     FROM winddb_mirror.ashareeodprices FINAL
-                    WHERE TRADE_DT = dt) AS TmpEodP
+                    WHERE TRADE_DT IN dates
+                    GROUP BY Code
+                ) AS A
                 JOIN (
-                    -- 查市值数据
-                    SELECT S_INFO_WINDCODE                  Code,
-                           toDecimal64(S_VAL_MV, 4) * 10000 TotalMarketValue,
-                           toDecimal64(S_DQ_MV, 4) * 10000  FreeMarketValue
-                    FROM winddb_mirror.ashareeodderivativeindicator FINAL
-                    WHERE TRADE_DT = dt) AS TmpEodC
-                ON TmpEodP.Code = TmpEodC.Code
-                WHERE abs(ClosePrice) > 0.0001 AND abs(PreClosePrice) > 0.0001
-                    AND Code IN ($(CommonUtils.join_str(codes)))
-            ) AS ET
-            LEFT JOIN (
-                SELECT EX_DT Date, WIND_CODE Code, CASH_DVD_PER_SH_AFTER_TAX CashRate, STK_DVD_PER_SH StrikeRate
-                FROM winddb_mirror.asharedividend FINAL
-                WHERE Date = dt
-            ) AS DT
-            ON ET.Code = DT.Code
-    """)
-end
-
-function get_apr_simple_ver(date, rolling_window, codes)
-    ClickHouse.select_df(conn(), """
-        WITH '$(CommonUtils.format_dt(date))' AS dt,
-            $(rolling_window) AS rw,
-            dates AS (
-               SELECT DISTINCT TRADE_DT
-               FROM winddb_mirror.ashareeodprices FINAL
-               WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
-               ORDER BY TRADE_DT DESC
-               LIMIT rw
-            ),
-            dates100 AS (
-               SELECT DISTINCT TRADE_DT
-               FROM winddb_mirror.ashareeodprices FINAL
-               WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
-               ORDER BY TRADE_DT DESC
-               LIMIT 100
-            )
-        SELECT Code,
-              AvgAmount,
-              AvgAmplitude,
-              AvgTRTotal,
-              AvgTRFree,
-              AvgTotalMarketValue,
-              AvgFreeMarketValue
-        FROM (
-            -- 历史平均成交额&振幅
-            SELECT *, greatest(avgAmount, avgAmount100) AvgAmount
-            FROM (
-                SELECT S_INFO_WINDCODE                               Code,
-                       avg(S_DQ_AMOUNT) * 1000                       avgAmount,
-                       avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
-                FROM winddb_mirror.ashareeodprices FINAL
-                WHERE TRADE_DT IN dates
-                GROUP BY Code
-            ) AS A
+                    SELECT S_INFO_WINDCODE Code,
+                           avg(S_DQ_AMOUNT) * 1000 avgAmount100
+                    FROM winddb_mirror.ashareeodprices FINAL
+                    WHERE TRADE_DT IN dates100
+                    GROUP BY Code
+                ) AS B
+                ON A.Code = B.Code
+            ) AS TmpEodA
             JOIN (
-                SELECT S_INFO_WINDCODE Code,
-                       avg(S_DQ_AMOUNT) * 1000 avgAmount100
-                FROM winddb_mirror.ashareeodprices FINAL
-                WHERE TRADE_DT IN dates100
-                GROUP BY Code
-            ) AS B
-            ON A.Code = B.Code
-        ) AS TmpEodA
-        JOIN (
-           -- 历史平均市值&换手率
-           SELECT S_INFO_WINDCODE        Code,
-                  avg(S_DQ_TURN)         AvgTRTotal,
-                  avg(S_DQ_FREETURNOVER) AvgTRFree,
-                  avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
-                  avg(S_DQ_MV) * 10000   AvgFreeMarketValue
-           FROM winddb_mirror.ashareeodderivativeindicator FINAL
-           WHERE TRADE_DT IN dates
-           GROUP BY Code
-           ) AS TmpEodT
-        ON TmpEodA.Code = TmpEodT.Code
-        WHERE Code IN ($(CommonUtils.join_str(codes)))
-    """)
+               -- 历史平均市值&换手率
+               SELECT S_INFO_WINDCODE        Code,
+                      avg(S_DQ_TURN)         AvgTRTotal,
+                      avg(S_DQ_FREETURNOVER) AvgTRFree,
+                      avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
+                      avg(S_DQ_MV) * 10000   AvgFreeMarketValue
+               FROM winddb_mirror.ashareeodderivativeindicator FINAL
+               WHERE TRADE_DT IN dates
+               GROUP BY Code
+               ) AS TmpEodT
+            ON TmpEodA.Code = TmpEodT.Code
+            WHERE Code IN ($(CommonUtils.join_str(codes)))
+        """
+    )
 end
 
-function get_table(conn, program_id, name; ih_col_name="InputHash", cond="")
+function get_table(cli, program_id, name; ih_col_name="InputHash", cond="")
     query = """
         SELECT * FROM $(name)
         WHERE $(ih_col_name) IN (
@@ -240,29 +268,32 @@ function get_table(conn, program_id, name; ih_col_name="InputHash", cond="")
             WHERE RunningFrom LIKE '$(program_id)' $(cond)
         )
     """
-    return ClickHouse.select_df(conn, query)
+    return query_df(cli, query)
 end
 
-function get_input_hash(conn, program_id; cond=nothing)
+function get_input_hash(cli, program_id; cond=nothing)
     query = "SELECT DISTINCT Id FROM $(input_tb) WHERE RunningFrom LIKE '$(program_id)'"
 
     if cond !== nothing
         query *= " AND ($cond)"
     end
 
-    res = ClickHouse.select_df(conn, query)
+    res = query_df(cli, query)
     return nrow(res) == 0 ? String[] : res[:, :Id]
 end
 
-function get_prices(conn, dates, ids; exchange=nothing)
+function get_prices(cli, dates, ids; exchange=nothing)
     exchange_condition = exchange !== nothing ? "AND endsWith(Symbol, '$(exchange)')" : ""
 
-    prices = ClickHouse.select_df(conn, """
-        SELECT DISTINCT Symbol, Date, toFloat32(PreClose) PreClose, toFloat32(OpenPrice) OpenPrice, toFloat32(Price) EodPrice
-        FROM $(input_tb)
-        WHERE Id IN ($(join_str(ids))) AND Date IN ($(join_str(dates))) $(exchange_condition)
-        ORDER BY Date
-    """)
+    prices = query_df(
+        cli,
+        """
+    SELECT DISTINCT Symbol, Date, toFloat32(PreClose) PreClose, toFloat32(OpenPrice) OpenPrice, toFloat32(Price) EodPrice
+    FROM $(input_tb)
+    WHERE Id IN ($(join_str(ids))) AND Date IN ($(join_str(dates))) $(exchange_condition)
+    ORDER BY Date
+"""
+    )
 
     return prices
 end
@@ -280,13 +311,16 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         add_bins!(property_, to_classify, n_bins=10)
 
         execute(conn, """DROP TABLE IF EXISTS Bins""")
-        execute(conn, """
-            CREATE TEMPORARY TABLE Bins (
-                Symbol FixedString(9),
-                $(to_classify) Float64,
-                Bin Int
-            )
-        """)
+        execute(
+            conn,
+            """
+    CREATE TEMPORARY TABLE Bins (
+        Symbol FixedString(9),
+        $(to_classify) Float64,
+        Bin Int
+    )
+"""
+        )
 
         dict = Dict(pairs(eachcol(property_)))
         insert(conn, "Bins", [dict])
@@ -316,14 +350,17 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
         end
 
         execute(conn, """DROP TABLE IF EXISTS OpenPortions""")
-        execute(conn, """
-            CREATE TEMPORARY TABLE OpenPortions (
-                Date Date,
-                Symbol FixedString(9),
-                OpenPortion Float32,
-                TovBin Int
-            )
-        """)
+        execute(
+            conn,
+            """
+    CREATE TEMPORARY TABLE OpenPortions (
+        Date Date,
+        Symbol FixedString(9),
+        OpenPortion Float32,
+        TovBin Int
+    )
+"""
+        )
 
         dict = Dict(pairs(eachcol(tov_[!, [:Date, :Symbol, :OpenPortion, :TovBin]])))
         insert(conn, "OpenPortions", [dict])
@@ -760,9 +797,8 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
     return comp_date, comp_avg, to_classify !== nothing ? round.(bins, digits=3) : nothing
 end
 
-function get_trade_rtn(conn, date, ih, capital)
-    ClickHouse.select_df(
-        conn,
+function get_trade_rtn(cli, date, ih, capital)
+    query_df(cli,
         """
     SELECT InputHash, toDate(Timestamp) Date, Symbol,
            sumIf(Price * FilledVolume, Direction = 'B')/$capital/2 BuyTurnoverRatio,
@@ -797,9 +833,9 @@ function get_trade_rtn(conn, date, ih, capital)
     )
 end
 
-function get_trade_rtn(conn, ih, capital)
-    ClickHouse.select_df(
-        conn,
+function get_trade_rtn(cli, ih, capital)
+    query_df(
+        cli,
         """
     SELECT InputHash, toDate(Timestamp) Date, Symbol,
            sumIf(Price * FilledVolume, Direction = 'B')/$capital BuyTurnoverRatio,
