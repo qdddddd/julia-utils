@@ -2,8 +2,7 @@ module PlotFunc
 export palette, plot_group, plot_curves, plot_table, plot_pnl, get_bt_trades, plot_trades, plot_bt_trades, plot_md, to_file, get_x_domain, get_y_domain, combine_plots
 
 using DataFrames, ClickHouse, Dates, ColorSchemes, PlotlyJS, Colors, PyCall
-using CommonUtils, DfUtils, DbUtils
-include("../../constants.jl")
+using ..CommonUtils, ..DfUtils, ..DbUtils
 
 palette = nothing
 default_color = nothing

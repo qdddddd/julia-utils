@@ -3,26 +3,22 @@ module DbUtils
 export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, gcli
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
-using CommonUtils: format_dt, to_datetime
+using ..CommonUtils: format_dt, to_datetime
 
-include("../../constants.jl")
-
-global _conn = nothing
-global _cli = nothing
-global ch_conf = nothing
-global minio_cfg = nothing
+_cli = nothing
+ch_conf = nothing
+minio_cfg = nothing
 
 function __init__()
-    global ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
+    DbUtils.ch_conf = parse_xml(read(joinpath(homedir(), ".clickhouse-client/config.xml"), String))
     _minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
-    global minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
+    DbUtils.minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
 
     copy!(pymssql, pyimport("pymssql"))
 end
 
 function connect_ch()
-    global ch_conf
-    conn = ClickHouse.connect(ch_conf["host"], parse(Int, ch_conf["port"]); username=ch_conf["user"], password=ch_conf["password"])
+    conn = ClickHouse.connect(DbUtils.ch_conf["host"], parse(Int, DbUtils.ch_conf["port"]); username=DbUtils.ch_conf["user"], password=DbUtils.ch_conf["password"])
     ClickHouse.execute(conn, "SET max_memory_usage = 1280000000000")
     conn
 end
@@ -30,7 +26,7 @@ end
 function execute_queries(queries, to_throw=false)
     for q in queries
         try
-            c, lk = get_conn!(_cli)
+            c, lk = get_conn!(DbUtils._cli)
             lock(lk) do
                 execute(c, q)
             end
@@ -101,16 +97,15 @@ reconnect!(client::ClickHouseClient) =
 is_connected(cli::ClickHouseClient) = all(ClickHouse.is_connected, cli.pool)
 
 function gcli()
-    global _cli
-    if !isnothing(_cli)
-        if !is_connected(_cli)
-            reconnect!(_cli)
+    if !isnothing(DbUtils._cli)
+        if !is_connected(DbUtils._cli)
+            reconnect!(DbUtils._cli)
         end
     else
-        _cli = ClickHouseClient()
+        DbUtils._cli = ClickHouseClient()
     end
 
-    return _cli
+    return DbUtils._cli
 end
 
 # ===========================================================
@@ -133,9 +128,8 @@ function get_md(date, symbol; nan=true, lite=true)
         return nothing
     end
 
-    global minio_cfg
     df = CSV.read(
-        s3_get(minio_cfg, bucket, fn), DataFrame;
+        s3_get(DbUtils.minio_cfg, bucket, fn), DataFrame;
         select=(lite ? [:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover] : nothing),
         types=Dict(:BidPrice1 => Float32, :AskPrice1 => Float32, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",
@@ -171,8 +165,7 @@ function get_index(name, date; unix=false)
         return nothing
     end
 
-    global minio_cfg
-    df = CSV.read(s3_get(minio_cfg, bucket, fn), DataFrame; select=[:TimeInMillSeconds, :LastPrice])
+    df = CSV.read(s3_get(DbUtils.minio_cfg, bucket, fn), DataFrame; select=[:TimeInMillSeconds, :LastPrice])
     rename!(df, :TimeInMillSeconds => :ExTime)
     df = combine(groupby(df, :ExTime), last)
     df[!, :LastPrice] = round.(df.LastPrice, digits=4)
@@ -200,8 +193,7 @@ function get_od(date, symbol)
 
     bucket *= postfix
 
-    global minio_cfg
-    df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
+    df = CSV.read(s3_get(DbUtils.minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
 
     if hasproperty(df, :TimeStamp)
         rename!(df, :TimeStamp => :Timestamp)
@@ -254,8 +246,7 @@ function get_td(date, symbol)
 
     bucket *= postfix
 
-    global minio_cfg
-    df = CSV.read(s3_get(minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
+    df = CSV.read(s3_get(DbUtils.minio_cfg, bucket, "$(date)/$(symbol)_$(date).gz"), DataFrame)
 
     if hasproperty(df, :TimeStamp)
         rename!(df, :TimeStamp => :Timestamp)
@@ -293,12 +284,11 @@ function mc_readdir(path)
         path = path * "/"
     end
 
-    global minio_cfg
-    readdir(S3Path("s3://$(path)", config=minio_cfg))
+    readdir(S3Path("s3://$(path)", config=DbUtils.minio_cfg))
 end
 
-mc_isfile(fn) = isfile(S3Path("s3://$(fn)", config=minio_cfg))
-mc_ispath(path) = ispath(S3Path("s3://$(path)", config=minio_cfg))
+mc_isfile(fn) = isfile(S3Path("s3://$(fn)", config=DbUtils.minio_cfg))
+mc_ispath(path) = ispath(S3Path("s3://$(path)", config=DbUtils.minio_cfg))
 
 struct IndexMonthCode
     YearOffset::Int
@@ -407,9 +397,8 @@ function get_future_md(date, symbol, nan=true)
         return nothing
     end
 
-    global minio_cfg
     df = CSV.read(
-        s3_get(minio_cfg, bucket, fn), DataFrame;
+        s3_get(DbUtils.minio_cfg, bucket, fn), DataFrame;
         select=[:ExTime, :AppSeq, :BidPrice1, :AskPrice1, :BidVolume1, :AskVolume1, :Turnover],
         types=Dict(:BidPrice1 => Float32, :AskPrice1 => Float32, :ExTime => DateTime),
         dateformat="yyyy-mm-dd HH:MM:SS.s",

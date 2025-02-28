@@ -3,8 +3,7 @@ export get_st, get_index_members, get_apr_info, get_apr_simple_ver, get_table, g
 
 using DataFrames, StatsBase, DataFramesMeta, ClickHouse
 using Base: AbstractVecOrTuple
-using DfUtils, DbUtils, CommonUtils
-include("../../constants.jl")
+using ..DfUtils, ..DbUtils, ..CommonUtils
 
 function get_st(date, symbol)
     query_df(
@@ -43,13 +42,13 @@ end
 
 function get_index_members(cli, date, index::AbstractString; skip_st=false, skip_stop=false)
     st_query = """
-        $(skip_st ? "" : """
+        $(skip_st ? """
             AND Code NOT IN (
                 SELECT DISTINCT toString(S_INFO_WINDCODE)
                 FROM winddb_mirror.asharest FINAL
                 WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
             )
-        """)
+        """ : "")
     """
 
     stop_query = """
@@ -189,6 +188,55 @@ function get_apr_info(date, codes, c=nothing)
                     WHERE Date = dt
                 ) AS DT
                 ON ET.Code = DT.Code
+        """
+    )
+end
+
+function get_rolling_apr(date, rolling_window, codes, cli=nothing)
+    if cli === nothing
+        cli = gcli()
+    end
+    query_df(
+        cli,
+        """
+            WITH '$(CommonUtils.format_dt(date))' AS dt,
+                $(rolling_window) AS rw,
+                dates AS (
+                   SELECT DISTINCT TRADE_DT
+                   FROM winddb_mirror.ashareeodprices FINAL
+                   WHERE TRADE_DT < dt AND S_DQ_AMOUNT > 0
+                   ORDER BY TRADE_DT DESC
+                   LIMIT rw
+                )
+            SELECT Code,
+                  AvgAmount,
+                  AvgAmplitude,
+                  AvgTRTotal,
+                  AvgTRFree,
+                  AvgTotalMarketValue,
+                  AvgFreeMarketValue
+            FROM (
+                -- 历史平均成交额&振幅
+                SELECT S_INFO_WINDCODE                               Code,
+                       avg(S_DQ_AMOUNT) * 1000                       AvgAmount,
+                       avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
+                FROM winddb_mirror.ashareeodprices FINAL
+                WHERE TRADE_DT IN dates
+                GROUP BY Code
+            ) AS TmpEodA
+            JOIN (
+               -- 历史平均市值&换手率
+               SELECT S_INFO_WINDCODE        Code,
+                      avg(S_DQ_TURN)         AvgTRTotal,
+                      avg(S_DQ_FREETURNOVER) AvgTRFree,
+                      avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
+                      avg(S_DQ_MV) * 10000   AvgFreeMarketValue
+               FROM winddb_mirror.ashareeodderivativeindicator FINAL
+               WHERE TRADE_DT IN dates
+               GROUP BY Code
+               ) AS TmpEodT
+            ON TmpEodA.Code = TmpEodT.Code
+            WHERE Code IN ($(CommonUtils.join_str(codes)))
         """
     )
 end

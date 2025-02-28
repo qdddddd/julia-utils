@@ -24,4 +24,4 @@ index_codes = Dict(
 );
 
 using Dates
-holidays = Set(Date.(readlines(joinpath(@__DIR__, "holidays.txt"))))
+holidays = Set(Date.(readlines(joinpath(@__DIR__, "../holidays.txt"))))

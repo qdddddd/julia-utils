@@ -137,4 +137,6 @@ function totalsize(dirpath; noprint=false)
     ret[]
 end
 
+Base.first(v::AbstractVecOrTuple, n) = v[1:n]
+
 end
