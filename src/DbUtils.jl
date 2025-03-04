@@ -4,6 +4,7 @@ export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
 using ..CommonUtils: format_dt, to_datetime
+using ..JlUtils: index_codes
 
 _cli = nothing
 ch_conf = nothing
