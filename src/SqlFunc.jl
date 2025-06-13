@@ -5,6 +5,8 @@ using DataFrames, StatsBase, DataFramesMeta, ClickHouse
 using Base: AbstractVecOrTuple
 using ..DfUtils, ..DbUtils, ..CommonUtils
 
+include("constants.jl")
+
 function get_st(date, symbol)
     query_df(
         gcli(),

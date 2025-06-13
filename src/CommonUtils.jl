@@ -29,27 +29,29 @@ end
 
 squeeze(arr) = dropdims(arr, dims=tuple(findall(size(arr) .== 1)...))
 
-function format_number(num)
-    if (isa(num, AbstractVecOrTuple))
-        num = _format_number.(num)
-        return "[" * join(num, ", ") * "]"
-    end
-
-    return _format_number(num)
+function format_number(nums::Base.AbstractVecOrTuple)
+    "[" * join(_format_number.(nums), ", ") * "]"
 end
 
-function _format_number(num)
+function format_number(num::Union{Number,AbstractString}; digits=-1)
     if isa(num, AbstractString)
         return num
     end
 
-    str = split(string(num), '.')
-    ret = replace(str[1], r"(?<=[0-9])(?=(?:[0-9]{3})+(?![0-9]))" => ",")
-    if length(str) == 2
-        return str[2] == "0" ? ret : ret * "." * str[2]
-    else
-        return ret
+    int_part = floor(Int, num)
+    dec_part = num - int_part
+
+    if digits >= 0
+        dec_part = round(dec_part, digits=digits)
     end
+
+    int_part = replace(string(int_part), r"(?<=[0-9])(?=(?:[0-9]{3})+(?![0-9]))" => ",")
+
+    if dec_part == 0
+        return int_part
+    end
+
+    return "$(int_part).$(string(dec_part)[3:end])"
 end
 
 import Base.*
