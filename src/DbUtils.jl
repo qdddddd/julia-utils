@@ -109,6 +109,16 @@ function gcli()
     return DbUtils._cli
 end
 
+function getcolumns(query)
+    select_lines = split(query, "SELECT")[2] |> x -> split(x, "FROM")[1]
+    delim = ",\n"
+    if !occursin(delim, select_lines)
+        delim = ", "
+    end
+    Symbol.(replace.(last.(split.(strip.(split(select_lines, delim)), " ")), "`" => ""))
+end
+
+query_df(query::String) = query_df(gcli(), query)[!, getcolumns(query)]
 # ===========================================================
 
 function get_md(date, symbol; nan=true, lite=true)
