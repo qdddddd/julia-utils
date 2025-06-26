@@ -1,5 +1,5 @@
 module DfUtils
-export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift, collapse, parallel_apply, parallel_apply!, add_bins!, round_df!, rolling_sum, rolling_mean, rolling_sum_prod, rolling_min, rolling_max, skipna, fixna
+export read_hdf, head, tail, ffill, backfill, fillna, fillna!, interpolate, from_hdf, shift!, collapse, parallel_apply, parallel_apply!, add_bins!, round_df!, rolling_sum, rolling_mean, rolling_sum_prod, rolling_min, rolling_max, skipna, fixna
 
 using DataFrames, DataFramesMeta, Base.Threads, StatsBase, HDF5, FileIO
 using ..CommonUtils: to_datetime, squeeze, format_number
@@ -78,15 +78,15 @@ function from_hdf(
     return X1, X2, Y
 end
 
-function shift(arr::Union{AbstractVecOrMat,DataFrame}, n::Int, fill_missing=missing)
+function shift!(arr::Union{AbstractVecOrMat,DataFrame}, n::Int, fill_missing=missing)
     ret = ismissing(fill_missing) ? allowmissing(arr) : similar(arr)
 
     if n > 0
-        ret[1:n, :] .= fill_missing
         ret[n+1:end, :] .= @view arr[1:end-n, :]
+        ret[1:n, :] .= fill_missing
     elseif n < 0
-        ret[end+n+1:end, :] .= fill_missing
         ret[1:end+n, :] .= @view arr[-n+1:end, :]
+        ret[end+n+1:end, :] .= fill_missing
     end
 
     return ret
