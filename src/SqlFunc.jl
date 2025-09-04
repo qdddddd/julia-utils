@@ -12,7 +12,7 @@ function get_st(date, symbol)
         gcli(),
         """
     WITH '$(format_dt(date))' as dt
-    SELECT * FROM winddb_mirror.asharest FINAL
+    SELECT * FROM winddb_m.asharest
     WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
         AND S_INFO_WINDCODE = '$(symbol)'
 """
@@ -24,7 +24,7 @@ function get_st(date)
         gcli(),
         """
     WITH '$(format_dt(date))' as dt
-    SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_mirror.asharest FINAL
+    SELECT DISTINCT dt Date, S_INFO_WINDCODE Code FROM winddb_m.asharest
     WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
 """
     )
@@ -34,9 +34,9 @@ function get_stop_tradings(date)
     query_df(
         gcli(),
         """
-    WITH '$(format_dt(date))' as dt
+    WITH $(format_dt(date)) as dt
     SELECT DISTINCT toString(S_INFO_WINDCODE) Code
-    FROM winddb_mirror.ashareeodprices FINAL
+    FROM winddb_m.ashareeodprices
     WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
 """
     ).Code
@@ -47,7 +47,7 @@ function get_index_members(cli, date, index::AbstractString; skip_st=false, skip
         $(skip_st ? """
             AND Code NOT IN (
                 SELECT DISTINCT toString(S_INFO_WINDCODE)
-                FROM winddb_mirror.asharest FINAL
+                FROM winddb_m.asharest
                 WHERE ENTRY_DT <= dt AND (REMOVE_DT > dt OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
             )
         """ : "")
@@ -57,7 +57,7 @@ function get_index_members(cli, date, index::AbstractString; skip_st=false, skip
         $(skip_stop ? """
             AND Code NOT IN (
                 SELECT DISTINCT toString(S_INFO_WINDCODE)
-                FROM winddb_mirror.ashareeodprices FINAL
+                FROM winddb_m.ashareeodprices
                 WHERE TRADE_DT = dt AND S_DQ_TRADESTATUSCODE = '0'
             )
         """ : "")
@@ -67,8 +67,8 @@ function get_index_members(cli, date, index::AbstractString; skip_st=false, skip
         return query_df(
             cli,
             """
-                WITH '$(format_dt(date))' AS dt
-                SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_mirror.ashareeodprices FINAL
+                WITH $(format_dt(date)) AS dt
+                SELECT DISTINCT S_INFO_WINDCODE Code FROM winddb_m.ashareeodprices
                 WHERE TRADE_DT = dt
                     $(st_query)
                     $(stop_query)
@@ -78,10 +78,10 @@ function get_index_members(cli, date, index::AbstractString; skip_st=false, skip
 
     index_code = index_codes[index]
     if endswith(index_code, "WI")
-        table = "winddb_mirror.aindexmemberswind FINAL"
+        table = "winddb_m.aindexmemberswind"
         index_col = "F_INFO_WINDCODE"
     else
-        table = "winddb_mirror.aindexmembers FINAL"
+        table = "winddb_m.aindexmembers"
         index_col = "S_INFO_WINDCODE"
     end
 
@@ -106,7 +106,7 @@ function get_index_members(cli, date, indexes::AbstractVecOrTuple; skip_st=false
         $(skip_st ? "" : """
             AND Code NOT IN (
                 SELECT DISTINCT toString(S_INFO_WINDCODE)
-                FROM winddb_mirror.asharest FINAL
+                FROM winddb_m.asharest
                 WHERE ENTRY_DT <= '$(dt)' AND (REMOVE_DT > '$(dt)' OR REMOVE_DT is NULL) AND S_TYPE_ST != 'R'
             )
         """)
@@ -116,8 +116,8 @@ function get_index_members(cli, date, indexes::AbstractVecOrTuple; skip_st=false
         $(skip_stop ? """
             AND Code NOT IN (
                 SELECT DISTINCT toString(S_INFO_WINDCODE)
-                FROM winddb_mirror.ashareeodprices FINAL
-                WHERE TRADE_DT = '$(dt)' AND S_DQ_TRADESTATUSCODE = '0'
+                FROM winddb_m.ashareeodprices
+                WHERE TRADE_DT = $(dt) AND S_DQ_TRADESTATUSCODE = '0'
             )
         """ : "")
     """
@@ -129,16 +129,16 @@ function get_index_members(cli, date, indexes::AbstractVecOrTuple; skip_st=false
         cli,
         """
     SELECT * FROM (
-        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmembers FINAL
+        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_m.aindexmembers
         WHERE S_INFO_WINDCODE IN ($(other_indexes_query))
-            AND (S_CON_OUTDATE > '$(dt)' OR S_CON_OUTDATE is NULL)
+            AND (S_CON_OUTDATE >= '$(dt)' OR S_CON_OUTDATE is NULL)
             AND S_CON_INDATE <= '$(dt)'
             $(st_query)
             $(stop_query)
 
         UNION ALL
 
-        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_mirror.aindexmemberswind FINAL
+        SELECT DISTINCT toString(S_CON_WINDCODE) Code FROM winddb_m.aindexmemberswind
         WHERE F_INFO_WINDCODE IN ($(wi_indexes_query))
             AND (S_CON_OUTDATE >= '$(dt)' OR S_CON_OUTDATE is NULL)
             AND S_CON_INDATE <= '$(dt)'
@@ -171,14 +171,14 @@ function get_apr_info(date, codes, c=nothing)
                                toFloat64(S_DQ_ADJFACTOR)     AdjFactorRolling,
                                toFloat64(S_DQ_AMOUNT) * 1000 Amount,
                                toInt64(S_DQ_VOLUME * 100)    Volume
-                        FROM winddb_mirror.ashareeodprices FINAL
+                        FROM winddb_m.ashareeodprices
                         WHERE TRADE_DT = dt) AS TmpEodP
                     JOIN (
                         -- 查市值数据
                         SELECT S_INFO_WINDCODE             Code,
                                toFloat64(S_VAL_MV) * 10000 TotalMarketValue,
                                toFloat64(S_DQ_MV) * 10000  FreeMarketValue
-                        FROM winddb_mirror.ashareeodderivativeindicator FINAL
+                        FROM winddb_m.ashareeodderivativeindicator
                         WHERE TRADE_DT = dt) AS TmpEodC
                     ON TmpEodP.Code = TmpEodC.Code
                     WHERE abs(ClosePrice) > 0.0001 AND abs(PreClosePrice) > 0.0001
@@ -186,7 +186,7 @@ function get_apr_info(date, codes, c=nothing)
                 ) AS ET
                 LEFT JOIN (
                     SELECT EX_DT Date, WIND_CODE Code, CASH_DVD_PER_SH_AFTER_TAX CashRate, STK_DVD_PER_SH StrikeRate
-                    FROM winddb_mirror.asharedividend FINAL
+                    FROM winddb_m.asharedividend
                     WHERE Date = dt
                 ) AS DT
                 ON ET.Code = DT.Code
@@ -205,7 +205,7 @@ function get_rolling_apr(date, rolling_window, codes, cli=nothing)
                 $(rolling_window) AS rw,
                 dates AS (
                    SELECT DISTINCT TRADE_DT
-                   FROM winddb_mirror.ashareeodprices FINAL
+                   FROM winddb_m.ashareeodprices
                    WHERE TRADE_DT < dt AND S_DQ_AMOUNT > 0
                    ORDER BY TRADE_DT DESC
                    LIMIT rw
@@ -222,7 +222,7 @@ function get_rolling_apr(date, rolling_window, codes, cli=nothing)
                 SELECT S_INFO_WINDCODE                               Code,
                        avg(S_DQ_AMOUNT) * 1000                       AvgAmount,
                        avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
-                FROM winddb_mirror.ashareeodprices FINAL
+                FROM winddb_m.ashareeodprices
                 WHERE TRADE_DT IN dates
                 GROUP BY Code
             ) AS TmpEodA
@@ -233,7 +233,7 @@ function get_rolling_apr(date, rolling_window, codes, cli=nothing)
                       avg(S_DQ_FREETURNOVER) AvgTRFree,
                       avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
                       avg(S_DQ_MV) * 10000   AvgFreeMarketValue
-               FROM winddb_mirror.ashareeodderivativeindicator FINAL
+               FROM winddb_m.ashareeodderivativeindicator
                WHERE TRADE_DT IN dates
                GROUP BY Code
                ) AS TmpEodT
@@ -254,14 +254,14 @@ function get_apr_simple_ver(date, rolling_window, codes, cli=nothing)
                 $(rolling_window) AS rw,
                 dates AS (
                    SELECT DISTINCT TRADE_DT
-                   FROM winddb_mirror.ashareeodprices FINAL
+                   FROM winddb_m.ashareeodprices
                    WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
                    ORDER BY TRADE_DT DESC
                    LIMIT rw
                 ),
                 dates100 AS (
                    SELECT DISTINCT TRADE_DT
-                   FROM winddb_mirror.ashareeodprices FINAL
+                   FROM winddb_m.ashareeodprices
                    WHERE TRADE_DT <= dt AND S_DQ_AMOUNT > 0
                    ORDER BY TRADE_DT DESC
                    LIMIT 100
@@ -280,14 +280,14 @@ function get_apr_simple_ver(date, rolling_window, codes, cli=nothing)
                     SELECT S_INFO_WINDCODE                               Code,
                            avg(S_DQ_AMOUNT) * 1000                       avgAmount,
                            avg((S_DQ_HIGH - S_DQ_LOW) / S_DQ_LOW * 1000) AvgAmplitude
-                    FROM winddb_mirror.ashareeodprices FINAL
+                    FROM winddb_m.ashareeodprices
                     WHERE TRADE_DT IN dates
                     GROUP BY Code
                 ) AS A
                 JOIN (
                     SELECT S_INFO_WINDCODE Code,
                            avg(S_DQ_AMOUNT) * 1000 avgAmount100
-                    FROM winddb_mirror.ashareeodprices FINAL
+                    FROM winddb_m.ashareeodprices
                     WHERE TRADE_DT IN dates100
                     GROUP BY Code
                 ) AS B
@@ -300,7 +300,7 @@ function get_apr_simple_ver(date, rolling_window, codes, cli=nothing)
                       avg(S_DQ_FREETURNOVER) AvgTRFree,
                       avg(S_VAL_MV) * 10000  AvgTotalMarketValue,
                       avg(S_DQ_MV) * 10000   AvgFreeMarketValue
-               FROM winddb_mirror.ashareeodderivativeindicator FINAL
+               FROM winddb_m.ashareeodderivativeindicator
                WHERE TRADE_DT IN dates
                GROUP BY Code
                ) AS TmpEodT
@@ -454,7 +454,7 @@ function agg_results(conn, dates, ids; with_real=false, property=nothing, to_cla
                        S_DQ_CLOSE EodPrice,
                        S_DQ_PRECLOSE PreClose,
                        S_DQ_OPEN OpenPrice
-                FROM winddb_mirror.ashareeodprices FINAL
+                FROM winddb_m.ashareeodprices
                 WHERE Date IN dates
             ) AS R
             ON L.Date = R.Date AND L.Symbol = R.Symbol
