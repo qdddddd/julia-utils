@@ -1,6 +1,6 @@
 module DbUtils
 
-export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, gcli
+export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, execute, insert, gcli
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
 using ..CommonUtils: format_dt, to_datetime
@@ -15,29 +15,13 @@ function __init__()
     _minio_cfg = JSON.parsefile(joinpath(homedir(), ".mc/config.json"))["aliases"]["remote"]
     DbUtils.minio_cfg = MinioConfig(_minio_cfg["url"]; username=_minio_cfg["accessKey"], password=_minio_cfg["secretKey"])
 
-    copy!(pymssql, pyimport("pymssql"))
+    # copy!(pymssql, pyimport("pymssql"))
 end
 
 function connect_ch()
     conn = ClickHouse.connect(DbUtils.ch_conf["host"], parse(Int, DbUtils.ch_conf["port"]); username=DbUtils.ch_conf["user"], password=DbUtils.ch_conf["password"])
     ClickHouse.execute(conn, "SET max_memory_usage = 1280000000000")
     conn
-end
-
-function execute_queries(queries, to_throw=false)
-    for q in queries
-        try
-            c, lk = get_conn!(DbUtils._cli)
-            lock(lk) do
-                execute(c, q)
-            end
-        catch e
-            if to_throw
-                throw(e)
-            end
-            reconnect()
-        end
-    end
 end
 
 # ===========================================================
@@ -90,6 +74,34 @@ function query_df(client::ClickHouseClient, query::String)
     end
 end
 
+function execute(client::ClickHouseClient, query::String)
+    c, lk = get_conn!(client)
+    lock(lk) do
+        return ClickHouse.execute(c, query)
+    end
+end
+
+function insert(client::ClickHouseClient, table::String, df::DataFrame)
+    vals = Dict(Symbol.(names(df)) .=> eachcol(df))
+    c, lk = get_conn!(client)
+    lock(lk) do
+        return ClickHouse.insert(c, table, [vals])
+    end
+end
+
+function execute_queries(queries, to_throw=false)
+    for q in queries
+        try
+            execute(q)
+        catch e
+            if to_throw
+                throw(e)
+            end
+            reconnect()
+        end
+    end
+end
+
 reconnect!(client::ClickHouseClient) =
     for i in eachindex(client.pool)
         client.pool[i] = connect_ch()
@@ -119,6 +131,8 @@ function getcolumns(query)
 end
 
 query_df(query::String) = query_df(gcli(), query)[!, getcolumns(query)]
+execute(query::String) = execute(gcli(), query)
+insert(table::String, df::DataFrame) = insert(gcli(), table, df)
 # ===========================================================
 
 function get_md(date, symbol; nan=true, lite=true)
@@ -348,7 +362,12 @@ function get_future_months(date::Date)
     return ret
 end
 
-is_holiday(date::Date) = date in holidays
+is_holiday(date::Date) = query_df(gcli(),
+    """
+    SELECT '$(date)' IN (
+        SELECT toDate(TRADE_DAYS) FROM winddb_m.asharecalendar WHERE S_INFO_EXCHMARKET = 'SZSE'
+    ) AS flag
+    """).flag[1] == 0
 
 function get_next_trading_day_if_holiday(date::Date)
     day_of_week = dayofweek(date)
@@ -426,36 +445,34 @@ function get_future_md(date, symbol, nan=true)
 end
 
 # mssql
-using PyCall
-const pymssql = PyNULL()
+# using PyCall
+# const pymssql = PyNULL()
 
-function query_mssql(query::String)
-    sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
-    cursor = sql_conn[:cursor](as_dict=true)
-    cursor[:execute](query)
-    rows = cursor[:fetchall]()
-    cursor[:close]()
-    sql_conn[:close]()
+# function query_mssql(query::String)
+# sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
+# cursor = sql_conn[:cursor](as_dict=true)
+# cursor[:execute](query)
+# rows = cursor[:fetchall]()
+# cursor[:close]()
+# sql_conn[:close]()
 
-    DataFrame(Dict(col => [r[col] for r in rows] for col in keys(rows[1])))
-end
+# DataFrame(Dict(col => [r[col] for r in rows] for col in keys(rows[1])))
+# end
 
-function query_mssql(queries::Vector{String})
-    sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
-    res = []
+# function query_mssql(queries::Vector{String})
+# res = []
+# sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
 
-    sql_conn = pymssql.connect(host="192.168.50.122", port=1433, user="sa", password="1Volution")
+# for q in queries
+# cursor = sql_conn[:cursor](as_dict=true)
+# cursor[:execute](q)
+# rows = cursor[:fetchall]()
+# push!(res, DataFrame(Dict(col => [r[col] for r in rows] for col in keys(rows[1]))))
+# cursor[:close]()
+# end
 
-    for q in queries
-        cursor = sql_conn[:cursor](as_dict=true)
-        cursor[:execute](q)
-        rows = cursor[:fetchall]()
-        push!(res, DataFrame(Dict(col => [r[col] for r in rows] for col in keys(rows[1]))))
-        cursor[:close]()
-    end
-
-    sql_conn[:close]()
-    res
-end
+# sql_conn[:close]()
+# res
+# end
 
 end
