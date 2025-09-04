@@ -22,6 +22,3 @@ index_codes = Dict(
     "IM" => "000852.SH",
     "All" => "All",
 );
-
-using Dates
-holidays = Set(Date.(readlines(joinpath(@__DIR__, "../holidays.txt"))))
