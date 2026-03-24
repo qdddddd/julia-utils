@@ -1,6 +1,6 @@
 module DbUtils
 
-export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, execute, insert, gcli
+export execute_queries, get_md, get_index, get_od, get_td, mc_readdir, mc_isfile, mc_ispath, get_future_months, get_next_trading_day_if_holiday, get_next_trading_day, get_prev_trading_day, get_future_md, query_mssql, ClickHouseClient, query_df, execute, insert, gcli, is_holiday
 
 using CSV, ClickHouse, Minio, XMLDict, JSON, DataFrames, DataFramesMeta, Dates, Logging
 using ..CommonUtils: format_dt, to_datetime

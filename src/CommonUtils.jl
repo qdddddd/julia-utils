@@ -30,10 +30,14 @@ end
 squeeze(arr) = dropdims(arr, dims=tuple(findall(size(arr) .== 1)...))
 
 function format_number(nums::Base.AbstractVecOrTuple)
-    "[" * join(_format_number.(nums), ", ") * "]"
+    "[" * join(format_number.(nums), ", ") * "]"
 end
 
-function format_number(num::Union{Number,AbstractString}; digits=-1)
+function format_number(num::Union{Number,AbstractString,Missing}; digits=-1)
+    if ismissing(num)
+        return ""
+    end
+
     if isa(num, AbstractString)
         return num
     end
